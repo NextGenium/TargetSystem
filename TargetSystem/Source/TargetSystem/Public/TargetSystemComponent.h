@@ -177,6 +177,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Target System")
 	bool IsLocked() const;
 
+	UFUNCTION(BlueprintCallable, Category = "Target System")
+	void ControlRotation(bool ShouldControlRotation) const;
+
 private:
 	UPROPERTY()
 	AActor* OwnerActor;
@@ -226,7 +229,6 @@ private:
 
 	FRotator GetControlRotationOnTarget(const AActor* OtherActor) const;
 	void SetControlRotationOnTarget(AActor* TargetActor) const;
-	void ControlRotation(bool ShouldControlRotation) const;
 
 	float GetAngleUsingCameraRotation(const AActor* ActorToLook) const;
 	float GetAngleUsingCharacterRotation(const AActor* ActorToLook) const;
