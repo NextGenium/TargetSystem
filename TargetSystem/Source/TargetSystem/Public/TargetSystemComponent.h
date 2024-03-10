@@ -182,19 +182,15 @@ public:
 
 private:
 	UPROPERTY()
-	AActor* OwnerActor;
-
+	AActor* OwnerActor = nullptr;
 	UPROPERTY()
-	APawn* OwnerPawn;
-
+	APawn* OwnerPawn = nullptr;
 	UPROPERTY()
-	APlayerController* OwnerPlayerController;
-
+	APlayerController* OwnerPlayerController = nullptr;
 	UPROPERTY()
-	UWidgetComponent* TargetLockedOnWidgetComponent;
-
+	UWidgetComponent* TargetLockedOnWidgetComponent = nullptr;
 	UPROPERTY()
-	AActor* LockedOnTargetActor;
+	AActor* LockedOnTargetActor = nullptr;
 
 	FTimerHandle LineOfSightBreakTimerHandle;
 	FTimerHandle SwitchingTargetTimerHandle;
