@@ -11,21 +11,28 @@ struct FTargetActorDetails;
 using TargetInterface = TScriptInterface<ITargetSystemInterface>;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnFinishTargetLock);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTargetIsDead, TScriptInterface<ITargetSystemInterface>, Interface);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+    FOnTargetIsDead,
+    TScriptInterface<ITargetSystemInterface>, Interface
+);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
     FComponentOnTargetLockedOnOff,
-    AActor*,
-    TargetActor
+    const AActor*, TargetActor
 );
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
     FComponentSetRotation,
-    AActor*,
-    TargetActor,
-    FRotator,
-    ControlRotation
+    const AActor*, TargetActor,
+    FRotator&, ControlRotation
 );
+
+UENUM(BlueprintType)
+enum class ECharacterRotationMode : uint8
+{
+    OrientToMovement,
+    Strafe,
+};
 
 class UUserWidget;
 class UWidgetComponent;
@@ -81,6 +88,9 @@ protected:
     // Base params
     UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Target System")
     TSubclassOf<AActor> RequiredClass;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
+    ECharacterRotationMode CharacterRotationMode = ECharacterRotationMode::OrientToMovement;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     bool bAutoTargetSwitch = false;
