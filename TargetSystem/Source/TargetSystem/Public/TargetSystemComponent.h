@@ -18,13 +18,13 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
     FComponentOnTargetLockedOnOff,
-    AActor*, TargetActor
+    const AActor*, TargetActor
 );
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
     FComponentSetRotation,
-    AActor*, TargetActor,
-    FRotator, ControlRotation
+    const AActor*, TargetActor,
+    FRotator&, ControlRotation
 );
 
 UENUM(BlueprintType)
@@ -91,12 +91,6 @@ protected:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     ECharacterRotationMode CharacterRotationMode = ECharacterRotationMode::OrientToMovement;
-
-    // UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
-    // bool bChangeOrientRotationToMovementWhenTargeting = true;
-    //
-    // UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
-    // bool bChangeUseControllerRotationYawWhenTargeting = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     bool bAutoTargetSwitch = false;

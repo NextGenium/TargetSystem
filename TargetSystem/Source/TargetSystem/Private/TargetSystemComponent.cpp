@@ -693,10 +693,7 @@ void UTargetSystemComponent::ControlRotation(const bool ShouldControlRotation) c
     if (CharacterRotationMode == ECharacterRotationMode::OrientToMovement)
     {
         OwnerPawn->bUseControllerRotationYaw = ShouldControlRotation;
-    }
 
-    if (CharacterRotationMode == ECharacterRotationMode::OrientToMovement)
-    {
         UCharacterMovementComponent* CharacterMovementComponent = OwnerPawn->FindComponentByClass<UCharacterMovementComponent>();
         if (IsValid(CharacterMovementComponent))
         {
