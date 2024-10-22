@@ -584,7 +584,7 @@ bool UTargetSystemComponent::LineTrace(const FVector& Start, const FVector& End,
     FCollisionQueryParams Params;
     Params.AddIgnoredActor(GetOwner());
 
-	TArray<AActor*> IgnoredActors {};
+	  TArray<AActor*> IgnoredActors {};
     IgnoredActors.Init(OwnerActor, 1);
     for (AActor* ChildActor : OwnerActor->Children)
     {
