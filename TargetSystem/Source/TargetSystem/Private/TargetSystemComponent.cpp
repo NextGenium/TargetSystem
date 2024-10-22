@@ -1,26 +1,36 @@
 // Copyright 2018-2021 Mickael Daniel. All Rights Reserved.
 
 #include "TargetSystemComponent.h"
-#include "TargetSystemTargetableInterface.h"
+#include "BTargetPoint.h"
+#include "..\Public\TargetSystemInterface.h"
 #include "Components/WidgetComponent.h"
 #include "EngineUtils.h"
+#include "TargetActorDetails.h"
+#include "TargetSystemDependencies.h"
 #include "TargetSystemLog.h"
 #include "Camera/CameraComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 
-// Sets default values for this component's properties
 UTargetSystemComponent::UTargetSystemComponent()
 {
-	PrimaryComponentTick.bCanEverTick = true;
+    PrimaryComponentTick.bCanEverTick = true;
 
-	LockedOnWidgetClass = StaticLoadClass(UObject::StaticClass(), nullptr, TEXT("/TargetSystem/UI/WBP_LockOn.WBP_LockOn_C"));
-	TargetableActors = APawn::StaticClass();
-	TargetableCollisionChannel = ECollisionChannel::ECC_Pawn;
+    LockedOnWidgetClass = StaticLoadClass(UObject::StaticClass(), nullptr, TEXT("/TargetSystem/UI/WBP_LockOn.WBP_LockOn_C"));
+    RequiredClass = APawn::StaticClass();
+    TargetCollisionChannel = ECC_Pawn;
 }
 
-// Called when the game starts
+void UTargetSystemComponent::SetUp(
+    bool _bAdjustPitchBasedOnDistanceToTarget,
+    bool _bAdjustPitchBasedOnDistanceToTargetUsingCurve
+)
+{
+    bAdjustPitchBasedOnDistanceToTarget = _bAdjustPitchBasedOnDistanceToTarget;
+    bAdjustPitchBasedOnDistanceToTargetUsingCurve = _bAdjustPitchBasedOnDistanceToTargetUsingCurve;
+}
+
 void UTargetSystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
@@ -38,6 +48,11 @@ void UTargetSystemComponent::BeginPlay()
 		return;
 	}
 
+    if (LoseTargetDistance < MaximumDistanceCanStartTarget)
+    {
+        LoseTargetDistance = MaximumDistanceCanStartTarget;
+    }
+
 	SetupLocalPlayerController();
 }
 
@@ -45,219 +60,339 @@ void UTargetSystemComponent::TickComponent(const float DeltaTime, const ELevelTi
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (!bTargetLocked || !LockedOnTargetActor)
-	{
-		return;
-	}
+    if (!bTargetLocked || !NearestTarget) return;
 
-	if (!TargetIsTargetable(LockedOnTargetActor))
-	{
-		TargetLockOff();
-		return;
-	}
-
-	SetControlRotationOnTarget(LockedOnTargetActor);
-
-	// Target Locked Off based on Distance
-	if (GetDistanceFromCharacter(LockedOnTargetActor) > MinimumDistanceToEnable)
-	{
-		TargetLockOff();
-	}
-
-	if (ShouldBreakLineOfSight() && !bIsBreakingLineOfSight)
-	{
-		if (BreakLineOfSightDelay <= 0)
-		{
-			TargetLockOff();
-		}
-		else
-		{
-			bIsBreakingLineOfSight = true;
-			GetWorld()->GetTimerManager().SetTimer(
-				LineOfSightBreakTimerHandle,
-				this,
-				&UTargetSystemComponent::BreakLineOfSight,
-				BreakLineOfSightDelay
-			);
-		}
-	}
+    SetControlRotationOnTarget();
 }
 
-void UTargetSystemComponent::TargetActor()
+bool UTargetSystemComponent::CanTargetLock() const
 {
-	ClosestTargetDistance = MinimumDistanceToEnable;
-
-	if (bTargetLocked)
-	{
-		TargetLockOff();
-	}
-	else
-	{
-		const TArray<AActor*> Actors = GetAllActorsOfClass(TargetableActors);
-		LockedOnTargetActor = FindNearestTarget(Actors);
-		TargetLockOn(LockedOnTargetActor);
-	}
+    return !PotentialTargets.IsEmpty();
 }
 
-void UTargetSystemComponent::TargetActorWithAxisInput(const float AxisValue)
+void UTargetSystemComponent::StartObservingTarget()
 {
-	// If we're not locked on, do nothing
-	if (!bTargetLocked)
-	{
-		return;
-	}
+    bTargetLocked = true;
+    NearestTarget->StartTargetable();
+    CurrentSocketOnNearestTarget = GetTargetDetails(NearestTarget).StartTargetPointName;
 
-	if (!LockedOnTargetActor)
-	{
-		return;
-	}
+    if (OnTargetLockedOn.IsBound())
+    {
+        OnTargetLockedOn.Broadcast(NearestTarget->GetTargetSystemDependencies()->GetOwner());
+    }
 
-	// If we're not allowed to switch target, do nothing
-	if (!ShouldSwitchTargetActor(AxisValue))
-	{
-		return;
-	}
+    SetupLocalPlayerController();
+    ControlRotation(true);
 
-	// If we're switching target, do nothing for a set amount of time
-	if (bIsSwitchingTarget)
-	{
-		return;
-	}
+    if (IsValid(OwnerPlayerController))
+    {
+        OwnerPlayerController->SetIgnoreLookInput(true);
+    }
 
-	// Lock off target
-	AActor* CurrentTarget = LockedOnTargetActor;
+    CreateAndAttachTargetLockedOnWidgetComponent(NearestTarget);
 
-	// Depending on Axis Value negative / positive, set Direction to Look for (negative: left, positive: right)
-	const float RangeMin = AxisValue < 0 ? 0 : 180;
-	const float RangeMax = AxisValue < 0 ? 180 : 360;
-
-	// Reset Closest Target Distance to Minimum Distance to Enable
-	ClosestTargetDistance = MinimumDistanceToEnable;
-
-	// Get All Actors of Class
-	TArray<AActor*> Actors = GetAllActorsOfClass(TargetableActors);
-
-	// For each of these actors, check line trace and ignore Current Target and build the list of actors to look from
-	TArray<AActor*> ActorsToLook;
-
-	TArray<AActor*> ActorsToIgnore;
-	ActorsToIgnore.Add(CurrentTarget);
-	for (AActor* Actor : Actors)
-	{
-		const bool bHit = LineTraceForActor(Actor, ActorsToIgnore);
-		if (bHit && IsInViewport(Actor))
-		{
-			ActorsToLook.Add(Actor);
-		}
-	}
-
-	// Find Targets in Range (left or right, based on Character and CurrentTarget)
-	TArray<AActor*> TargetsInRange = FindTargetsInRange(ActorsToLook, RangeMin, RangeMax);
-
-	// For each of these targets in range, get the closest one to current target
-	AActor* ActorToTarget = nullptr;
-	for (AActor* Actor : TargetsInRange)
-	{
-		// and filter out any character too distant from minimum distance to enable
-		const float Distance = GetDistanceFromCharacter(Actor);
-		if (Distance < MinimumDistanceToEnable)
-		{
-			const float RelativeActorsDistance = CurrentTarget->GetDistanceTo(Actor);
-			if (RelativeActorsDistance < ClosestTargetDistance)
-			{
-				ClosestTargetDistance = RelativeActorsDistance;
-				ActorToTarget = Actor;
-			}
-		}
-	}
-
-	if (ActorToTarget)
-	{
-		if (SwitchingTargetTimerHandle.IsValid())
-		{
-			SwitchingTargetTimerHandle.Invalidate();
-		}
-
-		TargetLockOff();
-		LockedOnTargetActor = ActorToTarget;
-		TargetLockOn(ActorToTarget);
-
-		GetWorld()->GetTimerManager().SetTimer(
-			SwitchingTargetTimerHandle,
-			this,
-			&UTargetSystemComponent::ResetIsSwitchingTarget,
-			// Less sticky if still switching
-			bIsSwitchingTarget ? 0.25f : 0.5f
-		);
-
-		bIsSwitchingTarget = true;
-	}
+    GetWorld()->GetTimerManager().SetTimer(ObservingTimer, this, &UTargetSystemComponent::UpdateTargetInfo, TimerTick, true);
 }
 
-bool UTargetSystemComponent::GetTargetLockedStatus()
+void UTargetSystemComponent::UpdateTargetInfo()
 {
-	return bTargetLocked;
+    FHitResult Hit;
+    if(NearestTarget->IsTargetable() && !LineTrace(GetOwner()->GetActorLocation(), GetTargetOwnerLocation(NearestTarget), Hit))
+    {
+        if (BehindWallTimer.IsValid()) return;
+        GetWorld()->GetTimerManager().SetTimer(BehindWallTimer, [this]() { StopObservingTarget(true); }, BreakLineOfSightDelay, false);
+        return;
+    }
+    GetWorld()->GetTimerManager().ClearTimer(BehindWallTimer);
+
+    if (NearestTarget
+        && NearestTarget->IsTargetable()
+        && GetDistanceFromTarget(NearestTarget) <= LoseTargetDistance) return;
+
+    StopObservingTarget(false, true);
+}
+
+void UTargetSystemComponent::StopObservingTarget(const bool bIgnoreAutoSwitch, const bool bTargetIsDead)
+{
+    if (NearestTarget)
+    {
+        if (OnTargetLockedOff.IsBound())
+        {
+            OnTargetLockedOff.Broadcast(NearestTarget->GetTargetSystemDependencies()->GetOwner());
+        }
+
+        NearestTarget->StopTargetable();
+        if (bTargetIsDead)
+        {
+            PotentialTargets.Remove(NearestTarget);
+            if (OnTargetIsDead.IsBound())
+            {
+                OnTargetIsDead.Broadcast(NearestTarget);
+            }
+        }
+    }
+    GetWorld()->GetTimerManager().ClearTimer(ObservingTimer);
+
+    if (TargetLockedOnWidgetComponent)
+    {
+        TargetLockedOnWidgetComponent->DestroyComponent();
+    }
+
+    if (bIsSwitchingTarget) return;
+
+    if (bAutoTargetSwitch && !bIgnoreAutoSwitch)
+    {
+        AutoSwitchTarget();
+        return;
+    }
+
+    StopTargetLock();
+}
+
+void UTargetSystemComponent::MessageFinishTargetLock() const
+{
+    if (OnFinishTargetLock.IsBound())
+    {
+        OnFinishTargetLock.Broadcast();
+    }
+}
+
+void UTargetSystemComponent::TryStartTargetLock()
+{
+    AddPotentialTargetsByInterface(RequiredClass);
+    if (!CanTargetLock())
+    {
+       MessageFinishTargetLock();
+        return;
+    }
+
+    NearestTarget = FindNearestTarget(true);
+    if (!NearestTarget)
+    {
+        MessageFinishTargetLock();
+        return;
+    }
+
+    StartObservingTarget();
+}
+
+void UTargetSystemComponent::StopTargetLock()
+{
+    SetupLocalPlayerController();
+
+    bTargetLocked = false;
+
+    if (NearestTarget)
+    {
+        ControlRotation(false);
+
+        if (IsValid(OwnerPlayerController))
+        {
+            OwnerPlayerController->ResetIgnoreLookInput();
+        }
+    }
+    PotentialTargets.Empty();
+
+    NearestTarget = nullptr;
+
+    MessageFinishTargetLock();
+}
+
+void UTargetSystemComponent::SwitchTarget(FVector2D AxisValue)
+{
+    if (!CanSwitchTarget(AxisValue)) return;
+    if (TrySwitchBetweenTargetPoints(AxisValue)) return;
+    if (PotentialTargets.Num() <= 1) return;
+    if (bIsSwitchingTarget) return;
+
+    TArray<TargetInterface> ActorsToLook;
+    FHitResult Hit;
+
+    for (TargetInterface Interface : PotentialTargets)
+    {
+        if(!LineTrace(GetOwner()->GetActorLocation(),  GetTargetOwnerLocation(Interface), Hit)) continue;
+        if (!IsInViewport(Interface)) continue;
+
+        ActorsToLook.Add(Interface);
+    }
+
+    const TargetInterface NewTarget = FMath::Abs(AxisValue.X) > FMath::Abs(AxisValue.Y)  ?
+        FindByHorizontal(ActorsToLook, AxisValue.X) :
+        FindByVertical(ActorsToLook, AxisValue);
+
+    if (!NewTarget) return;
+
+    bIsSwitchingTarget = true;
+
+    StopObservingTarget();
+    NearestTarget = NewTarget;
+    StartObservingTarget();
+
+    ResetIsSwitchingTarget();
+}
+
+void UTargetSystemComponent::AutoSwitchTarget()
+{
+    const TScriptInterface<ITargetSystemInterface> NewTarget = FindNearestTarget();
+    if (!NewTarget)
+    {
+        StopTargetLock();
+        return;
+    }
+    NearestTarget = NewTarget;
+    StartObservingTarget();
+
+    bIsSwitchingTarget = true;
+    ResetIsSwitchingTarget();
+}
+
+bool UTargetSystemComponent::TrySwitchBetweenTargetPoints(FVector2D AxisValue)
+{
+    if (!NearestTarget) return false;
+    if (GetTargetDetails(NearestTarget).TargetPoints.Num() <= 1) return false;
+    if (bIsSwitchingTarget) return false;
+
+    FString NewCurrentTargetPointName = "None";
+    const int32 MaxIndex = GetTargetDetails(NearestTarget).TargetPoints.Num() - 1;
+    const float MajorAxis = FMath::Abs(AxisValue.X) > FMath::Abs(AxisValue.Y) ? AxisValue.X : AxisValue.Y;
+
+     const float RangeMin = NearestTarget->GetTargetSystemDependencies()->GetOwner()->GetActorRotation().Yaw - 90.f;
+     const float RangeMax = NearestTarget->GetTargetSystemDependencies()->GetOwner()->GetActorRotation().Yaw + 90.f;
+
+    const int32 SwitchDirection = OwnerActor->GetActorRotation().Yaw > RangeMin && OwnerActor->GetActorRotation().Yaw < RangeMax ?
+          MajorAxis > 0.f ? 1 : -1:
+          MajorAxis > 0.f ? -1 : 1;
+
+
+    int32 CurrentIndex = 0;
+    for (int32 i = 0; i < GetTargetDetails(NearestTarget).TargetPoints.Num(); ++i)
+    {
+        if (GetTargetDetails(NearestTarget).TargetPoints[i]->GetName() == CurrentSocketOnNearestTarget)
+        {
+            CurrentIndex = i; break;
+        }
+    }
+
+    const int32 NewIndex = CurrentIndex + SwitchDirection;
+    if (NewIndex > MaxIndex || NewIndex < 0) return false;
+
+   CurrentSocketOnNearestTarget = GetTargetDetails(NearestTarget).TargetPoints[NewIndex]->GetName();
+    if (TargetLockedOnWidgetComponent)
+    {
+        TargetLockedOnWidgetComponent->DestroyComponent();
+    }
+    CreateAndAttachTargetLockedOnWidgetComponent(NearestTarget);
+    bIsSwitchingTarget = true;
+    ResetIsSwitchingTarget();
+    return true;
+}
+
+TScriptInterface<ITargetSystemInterface> UTargetSystemComponent::FindByHorizontal(TArray<TargetInterface> LookTargets, float AxisValue) const
+{
+    TScriptInterface<ITargetSystemInterface> NewNearestTarget = nullptr;
+
+    float MinDistance = MaximumDistanceCanStartTarget;
+    const float RangeMin = AxisValue < 0 ? 0 : 180;
+    const float RangeMax = AxisValue < 0 ? 180 : 360;
+
+    for (TScriptInterface<ITargetSystemInterface> Interface : LookTargets)
+    {
+        if (NearestTarget == Interface) continue;
+        const float Angle = GetAngleUsingCameraRotation(GetTargetOwnerLocation(Interface));
+        if (Angle < RangeMin || Angle > RangeMax) continue;
+
+        const float Distance = GetDistanceFromTarget(Interface);
+        if (Distance > MaximumDistanceCanStartTarget) continue;
+
+        const float RelativeActorsDistance = NearestTarget->GetTargetSystemDependencies()->GetOwner()->GetDistanceTo(Interface->GetTargetSystemDependencies()->GetOwner());
+        if (RelativeActorsDistance > MinDistance) continue;
+
+        MinDistance = RelativeActorsDistance;
+        NewNearestTarget = Interface;
+    }
+    return NewNearestTarget;
+}
+
+TScriptInterface<ITargetSystemInterface> UTargetSystemComponent::FindByVertical(TArray<TargetInterface> LookTargets, FVector2D AxisValue) const
+{
+    TScriptInterface<ITargetSystemInterface> NewNearestTarget = nullptr;
+
+    float MinDistance = MaximumDistanceCanStartTarget;
+
+    const float RangeMin = AxisValue.X < 0.f ? 0 : 180;
+    const float RangeMax = AxisValue.X < 0.f ? 180 : 360;
+
+    for (TScriptInterface<ITargetSystemInterface> Interface : LookTargets)
+    {
+        if (NearestTarget == Interface) continue;
+
+        const float Angle = GetAngleUsingCameraRotation(Interface->GetTargetSystemDependencies()->GetOwner()->GetActorLocation());
+        if (Angle < RangeMin || Angle > RangeMax) continue;
+
+        const float Distance = GetDistanceFromTarget(Interface);
+        if (Distance > MaximumDistanceCanStartTarget) continue;
+
+        const float RelativeActorsDistance = NearestTarget->GetTargetSystemDependencies()->GetOwner()->GetDistanceTo(Interface->GetTargetSystemDependencies()->GetOwner());
+        if (RelativeActorsDistance > MinDistance) continue;
+
+        if (AxisValue.Y < 0.f)
+        {
+            if (GetDistanceFromTarget(Interface) < GetDistanceFromTarget(NearestTarget)) continue;
+        }
+        else
+        {
+            if (GetDistanceFromTarget(Interface) > GetDistanceFromTarget(NearestTarget)) continue;
+        }
+
+        MinDistance = RelativeActorsDistance;
+        NewNearestTarget = Interface;
+    }
+    return NewNearestTarget;
 }
 
 AActor* UTargetSystemComponent::GetLockedOnTargetActor() const
 {
-	return LockedOnTargetActor;
+    if (NearestTarget == nullptr) return nullptr;
+	return NearestTarget->GetTargetSystemDependencies()->GetOwner();
 }
 
 bool UTargetSystemComponent::IsLocked() const
 {
-	return bTargetLocked && LockedOnTargetActor;
+	return bTargetLocked && NearestTarget;
 }
 
-TArray<AActor*> UTargetSystemComponent::FindTargetsInRange(TArray<AActor*> ActorsToLook, const float RangeMin, const float RangeMax) const
+float UTargetSystemComponent::GetAngleUsingCameraRotation(const FVector& Location) const
 {
-	TArray<AActor*> ActorsInRange;
+    const UCameraComponent* CameraComponent = OwnerActor->FindComponentByClass<UCameraComponent>();
+    if (!IsValid(CameraComponent))
+    {
+        return GetAngleUsingCharacterRotation(Location);
+    }
 
-	for (AActor* Actor : ActorsToLook)
-	{
-		const float Angle = GetAngleUsingCameraRotation(Actor);
-		if (Angle > RangeMin && Angle < RangeMax)
-		{
-			ActorsInRange.Add(Actor);
-		}
-	}
+    const FRotator CameraWorldRotation = CameraComponent->GetComponentRotation();
+    const FRotator LookAtRotation = FindLookAtRotation(CameraComponent->GetComponentLocation(), Location);
 
-	return ActorsInRange;
+    float YawAngle = CameraWorldRotation.Yaw - LookAtRotation.Yaw;
+    if (YawAngle < 0)
+    {
+        YawAngle = YawAngle + 360;
+    }
+
+    return YawAngle;
 }
 
-float UTargetSystemComponent::GetAngleUsingCameraRotation(const AActor* ActorToLook) const
+float UTargetSystemComponent::GetAngleUsingCharacterRotation(const FVector& Location) const
 {
-	UCameraComponent* CameraComponent = OwnerActor->FindComponentByClass<UCameraComponent>();
-	if (!CameraComponent)
-	{
-		// Fallback to CharacterRotation if no CameraComponent can be found
-		return GetAngleUsingCharacterRotation(ActorToLook);
-	}
+    const FRotator CharacterRotation = OwnerActor->GetActorRotation();
+    const FRotator LookAtRotation = FindLookAtRotation(OwnerActor->GetActorLocation(), Location);
 
-	const FRotator CameraWorldRotation = CameraComponent->GetComponentRotation();
-	const FRotator LookAtRotation = FindLookAtRotation(CameraComponent->GetComponentLocation(), ActorToLook->GetActorLocation());
+    float YawAngle = CharacterRotation.Yaw - LookAtRotation.Yaw;
+    if (YawAngle < 0)
+    {
+        YawAngle = YawAngle + 360;
+    }
 
-	float YawAngle = CameraWorldRotation.Yaw - LookAtRotation.Yaw;
-	if (YawAngle < 0)
-	{
-		YawAngle = YawAngle + 360;
-	}
-
-	return YawAngle;
-}
-
-float UTargetSystemComponent::GetAngleUsingCharacterRotation(const AActor* ActorToLook) const
-{
-	const FRotator CharacterRotation = OwnerActor->GetActorRotation();
-	const FRotator LookAtRotation = FindLookAtRotation(OwnerActor->GetActorLocation(), ActorToLook->GetActorLocation());
-
-	float YawAngle = CharacterRotation.Yaw - LookAtRotation.Yaw;
-	if (YawAngle < 0)
-	{
-		YawAngle = YawAngle + 360;
-	}
-
-	return YawAngle;
+    return YawAngle;
 }
 
 FRotator UTargetSystemComponent::FindLookAtRotation(const FVector Start, const FVector Target)
@@ -267,117 +402,45 @@ FRotator UTargetSystemComponent::FindLookAtRotation(const FVector Start, const F
 
 void UTargetSystemComponent::ResetIsSwitchingTarget()
 {
+    if (!SwitchingTargetTimerHandle.IsValid())
+    {
+        GetWorld()->GetTimerManager().SetTimer(
+             SwitchingTargetTimerHandle,
+             this,
+             &UTargetSystemComponent::ResetIsSwitchingTarget,
+             bIsSwitchingTarget ? 0.25f : 0.5f,
+             false
+         );
+        return;
+    }
+
+    GetWorld()->GetTimerManager().ClearTimer(SwitchingTargetTimerHandle);
 	bIsSwitchingTarget = false;
-	bDesireToSwitch = false;
 }
 
-bool UTargetSystemComponent::ShouldSwitchTargetActor(const float AxisValue)
+bool UTargetSystemComponent::CanSwitchTarget(const FVector2D& AxisValue) const
 {
-	// Sticky feeling computation
-	if (bEnableStickyTarget)
-	{
-		StartRotatingStack += (AxisValue != 0) ? AxisValue * AxisMultiplier : (StartRotatingStack > 0 ? -AxisMultiplier : AxisMultiplier);
-
-		if (AxisValue == 0 && FMath::Abs(StartRotatingStack) <= AxisMultiplier)
-		{
-			StartRotatingStack = 0.0f;
-		}
-
-		// If Axis value does not exceeds configured threshold, do nothing
-		if (FMath::Abs(StartRotatingStack) < StickyRotationThreshold)
-		{
-			bDesireToSwitch = false;
-			return false;
-		}
-
-		//Sticky when switching target.
-		if (StartRotatingStack * AxisValue > 0)
-		{
-			StartRotatingStack = StartRotatingStack > 0 ? StickyRotationThreshold : -StickyRotationThreshold;
-		}
-		else if (StartRotatingStack * AxisValue < 0)
-		{
-			StartRotatingStack = StartRotatingStack * -1.0f;
-		}
-
-		bDesireToSwitch = true;
-
-		return true;
-	}
-
-	// Non Sticky feeling, check Axis value exceeds threshold
-	return FMath::Abs(AxisValue) > StartRotatingThreshold;
+	return FMath::Abs(AxisValue.X) >= StartRotatingThreshold || FMath::Abs(AxisValue.Y) >= StartRotatingThreshold;
 }
 
-void UTargetSystemComponent::TargetLockOn(AActor* TargetToLockOn)
+void UTargetSystemComponent::CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface)
 {
-	if (!IsValid(TargetToLockOn))
-	{
-		return;
-	}
+    AActor* TargetActor = Interface.GetInterface()->GetTargetSystemDependencies()->GetOwner();
+    if (!IsValid(TargetActor)) return;
 
-	// Recast PlayerController in case it wasn't already setup on Begin Play (local split screen)
-	SetupLocalPlayerController();
+    const TArray<UBTargetPoint*> TargetPoints = GetTargetDetails(Interface).TargetPoints;
+    if (TargetPoints.IsEmpty()) return;
 
-	bTargetLocked = true;
-	if (bShouldDrawLockedOnWidget)
-	{
-		CreateAndAttachTargetLockedOnWidgetComponent(TargetToLockOn);
-	}
+    int32 Index = 0;
+    for (int32 i = 0; i < GetTargetDetails(Interface).TargetPoints.Num(); ++i)
+    {
+        if (GetTargetDetails(Interface).TargetPoints[i]->GetName() == CurrentSocketOnNearestTarget)
+        {
+            Index = i;
+            break;
+        }
+    }
 
-	if (bShouldControlRotation)
-	{
-		ControlRotation(true);
-	}
-
-	if (bAdjustPitchBasedOnDistanceToTarget || bIgnoreLookInput)
-	{
-		if (IsValid(OwnerPlayerController))
-		{
-			OwnerPlayerController->SetIgnoreLookInput(true);
-		}
-	}
-
-	if (OnTargetLockedOn.IsBound())
-	{
-		OnTargetLockedOn.Broadcast(TargetToLockOn);
-	}
-}
-
-void UTargetSystemComponent::TargetLockOff()
-{
-	// Recast PlayerController in case it wasn't already setup on Begin Play (local split screen)
-	SetupLocalPlayerController();
-
-	bTargetLocked = false;
-	if (TargetLockedOnWidgetComponent)
-	{
-		TargetLockedOnWidgetComponent->DestroyComponent();
-	}
-
-	if (LockedOnTargetActor)
-	{
-		if (bShouldControlRotation)
-		{
-			ControlRotation(false);
-		}
-
-		if (IsValid(OwnerPlayerController))
-		{
-			OwnerPlayerController->ResetIgnoreLookInput();
-		}
-
-		if (OnTargetLockedOff.IsBound())
-		{
-			OnTargetLockedOff.Broadcast(LockedOnTargetActor);
-		}
-	}
-
-	LockedOnTargetActor = nullptr;
-}
-
-void UTargetSystemComponent::CreateAndAttachTargetLockedOnWidgetComponent(AActor* TargetActor)
-{
 	if (!LockedOnWidgetClass)
 	{
 		TS_LOG(Error, TEXT("TargetSystemComponent: Cannot get LockedOnWidgetClass, please ensure it is a valid reference in the Component Properties."));
@@ -388,7 +451,7 @@ void UTargetSystemComponent::CreateAndAttachTargetLockedOnWidgetComponent(AActor
 	TargetLockedOnWidgetComponent->SetWidgetClass(LockedOnWidgetClass);
 
 	UMeshComponent* MeshComponent = TargetActor->FindComponentByClass<UMeshComponent>();
-	USceneComponent* ParentComponent = MeshComponent && LockedOnWidgetParentSocket != NAME_None ? MeshComponent : TargetActor->GetRootComponent();
+	USceneComponent* ParentComponent = MeshComponent ? MeshComponent : TargetActor->GetRootComponent();
 
 	if (IsValid(OwnerPlayerController))
 	{
@@ -397,38 +460,43 @@ void UTargetSystemComponent::CreateAndAttachTargetLockedOnWidgetComponent(AActor
 
 	TargetLockedOnWidgetComponent->ComponentTags.Add(FName("TargetSystem.LockOnWidget"));
 	TargetLockedOnWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
-	TargetLockedOnWidgetComponent->SetupAttachment(ParentComponent, LockedOnWidgetParentSocket);
+	TargetLockedOnWidgetComponent->SetupAttachment(TargetPoints[Index]);
 	TargetLockedOnWidgetComponent->SetRelativeLocation(LockedOnWidgetRelativeLocation);
 	TargetLockedOnWidgetComponent->SetDrawSize(FVector2D(LockedOnWidgetDrawSize, LockedOnWidgetDrawSize));
 	TargetLockedOnWidgetComponent->SetVisibility(true);
 	TargetLockedOnWidgetComponent->RegisterComponent();
 }
 
-TArray<AActor*> UTargetSystemComponent::GetAllActorsOfClass(const TSubclassOf<AActor> ActorClass) const
+void UTargetSystemComponent::AddPotentialTargetsByInterface(const TSubclassOf<AActor>& ActorClass)
 {
-	TArray<AActor*> Actors;
-	for (TActorIterator<AActor> ActorIterator(GetWorld(), ActorClass); ActorIterator; ++ActorIterator)
+	for (TActorIterator ActorIterator(GetWorld(), ActorClass); ActorIterator; ++ActorIterator)
 	{
-		AActor* Actor = *ActorIterator;
-		const bool bIsTargetable = TargetIsTargetable(Actor);
-		if (bIsTargetable)
-		{
-			Actors.Add(Actor);
-		}
-	}
+	    TScriptInterface<ITargetSystemInterface> Interface = TScriptInterface<ITargetSystemInterface>(*ActorIterator);
+	    if(!ObjectIsTargetable(Interface)) continue;
 
-	return Actors;
+	    if (GetDistanceFromTarget(Interface) > MaximumDistanceToPotentialTargets) continue;
+
+        PotentialTargets.Add(Interface);
+	}
 }
 
-bool UTargetSystemComponent::TargetIsTargetable(const AActor* Actor)
+bool UTargetSystemComponent::ObjectIsTargetable(const TScriptInterface<ITargetSystemInterface> Actor) const
 {
-	const bool bIsImplemented = Actor->GetClass()->ImplementsInterface(UTargetSystemTargetableInterface::StaticClass());
-	if (bIsImplemented)
-	{
-		return ITargetSystemTargetableInterface::Execute_IsTargetable(Actor);
-	}
+    if(!Actor) return false;
+    return GetTargetDetails(Actor).bCouldBeTarget;
+}
 
-	return true;
+int32 UTargetSystemComponent::GetPointIndexByName(const FString& Name) const
+{
+    constexpr int32 InvalidIndex = -1;
+    if (!NearestTarget) return InvalidIndex;
+    for (int32 i = 0; i < GetTargetDetails(NearestTarget).TargetPoints.Num(); ++i)
+    {
+        if (GetTargetDetails(NearestTarget).TargetPoints[i]->GetName() != Name) continue;
+
+        return i;
+    }
+    return InvalidIndex;
 }
 
 void UTargetSystemComponent::SetupLocalPlayerController()
@@ -442,79 +510,102 @@ void UTargetSystemComponent::SetupLocalPlayerController()
 	OwnerPlayerController = Cast<APlayerController>(OwnerPawn->GetController());
 }
 
-AActor* UTargetSystemComponent::FindNearestTarget(TArray<AActor*> Actors) const
+void UTargetSystemComponent::SortPotentialTargetsByDistance(TArray<TScriptInterface<ITargetSystemInterface>>& Array)
 {
-	TArray<AActor*> ActorsHit;
+    if (Array.IsEmpty()) return;
 
-	// Find all actors we can line trace to
-	for (AActor* Actor : Actors)
-	{
-		const bool bHit = LineTraceForActor(Actor);
-		if (bHit && IsInViewport(Actor))
-		{
-			ActorsHit.Add(Actor);
-		}
-	}
-
-	// From the hit actors, check distance and return the nearest
-	if (ActorsHit.Num() == 0)
-	{
-		return nullptr;
-	}
-
-	float ClosestDistance = ClosestTargetDistance;
-	AActor* Target = nullptr;
-	for (AActor* Actor : ActorsHit)
-	{
-		const float Distance = GetDistanceFromCharacter(Actor);
-		if (Distance < ClosestDistance)
-		{
-			ClosestDistance = Distance;
-			Target = Actor;
-		}
-	}
-
-	return Target;
+    Array.Sort([this](const TScriptInterface<ITargetSystemInterface> A, const TScriptInterface<ITargetSystemInterface> B)
+        {
+            return GetDistanceFromTarget(A) < GetDistanceFromTarget(B);
+        }
+    );
 }
 
-
-bool UTargetSystemComponent::LineTraceForActor(AActor* OtherActor, const TArray<AActor*> ActorsToIgnore) const
+void UTargetSystemComponent::SortPotentialTargetsByAngle(TArray<TScriptInterface<ITargetSystemInterface>>& Array)
 {
-	FHitResult HitResult;
-	const bool bHit = LineTrace(HitResult, OtherActor, ActorsToIgnore);
-	if (bHit)
-	{
-		AActor* HitActor = HitResult.GetActor();
-		if (HitActor == OtherActor)
-		{
-			return true;
-		}
-	}
+    if (Array.IsEmpty()) return;
 
-	return false;
+    Array.Sort([this](const TScriptInterface<ITargetSystemInterface> A, const TScriptInterface<ITargetSystemInterface> B)
+        {
+            return GetAngleUsingCameraRotation(GetTargetOwnerLocation(A)) < GetAngleUsingCameraRotation(GetTargetOwnerLocation(B));
+        }
+    );
 }
 
-bool UTargetSystemComponent::LineTrace(FHitResult& HitResult, const AActor* OtherActor, const TArray<AActor*> ActorsToIgnore) const
+TScriptInterface<ITargetSystemInterface> UTargetSystemComponent::FindNearestTarget(bool bUseAngle)
 {
-	FCollisionQueryParams Params = FCollisionQueryParams(FName("LineTraceSingle"));
+    if (PotentialTargets.IsEmpty()) return nullptr;
+    SortPotentialTargetsByDistance(PotentialTargets);
 
-	TArray<AActor*> IgnoredActors;
-	IgnoredActors.Init(OwnerActor, 1);
-	IgnoredActors += ActorsToIgnore;
+    TArray<TScriptInterface<ITargetSystemInterface>> CopyPotentialTargets = {};
+    bool bFindNearestTarget = false;
+    int32 BestTargetByDistance_Index = -1;
 
-	Params.AddIgnoredActors(IgnoredActors);
+    for (int32 i = 0; i < PotentialTargets.Num(); ++i)
+    {
+        FHitResult Hit;
+        if(!LineTrace(GetOwner()->GetActorLocation(), GetTargetOwnerLocation(PotentialTargets[i]), Hit)) continue;
 
-	return GetWorld()->LineTraceSingleByChannel(
-		HitResult,
-		OwnerActor->GetActorLocation(),
-		OtherActor->GetActorLocation(),
-		TargetableCollisionChannel,
-		Params
-	);
+        const float Distance = GetDistanceFromTarget(PotentialTargets[i]);
+
+        if (Distance > MaximumDistanceCanStartTarget) continue;
+
+        if (!bIgnoreViewport && !IsInViewport(PotentialTargets[i]) && Distance > DangerousDistanceToTarget) continue;
+
+        if (!bFindNearestTarget)
+        {
+            bFindNearestTarget = true;
+            BestTargetByDistance_Index = i;
+        }
+
+        if (!bUseAngle) break;
+
+        CopyPotentialTargets.Add(PotentialTargets[i]);
+    }
+    if (BestTargetByDistance_Index < 0) return nullptr;
+    if (!bUseAngle || bIgnoreViewport) return PotentialTargets[BestTargetByDistance_Index];
+
+    SortPotentialTargetsByAngle(CopyPotentialTargets);
+
+    for (int32 i = 0; i < CopyPotentialTargets.Num(); ++i)
+    {
+        if (GetAngleUsingCameraRotation(GetTargetOwnerLocation(CopyPotentialTargets[i])) > MaximumFindAngle) continue;
+
+        const float Distance = GetDistanceFromTarget(CopyPotentialTargets[i]);
+        if (GetDistanceFromTarget(PotentialTargets[BestTargetByDistance_Index]) + ExtraDistanceToLimitWhenSearchingByAngle < Distance) continue;
+
+        return CopyPotentialTargets[i];
+    }
+    return PotentialTargets[BestTargetByDistance_Index];
 }
 
-FRotator UTargetSystemComponent::GetControlRotationOnTarget(const AActor* OtherActor) const
+bool UTargetSystemComponent::LineTrace(const FVector& Start, const FVector& End, FHitResult& Hit) const
 {
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(GetOwner());
+
+	TArray<AActor*> IgnoredActors {};
+    IgnoredActors.Init(OwnerActor, 1);
+    for (AActor* ChildActor : OwnerActor->Children)
+    {
+        IgnoredActors.Add(ChildActor);
+    }
+    Params.AddIgnoredActors(IgnoredActors);
+    GetWorld()->LineTraceSingleByChannel(
+        Hit,
+        Start,
+        End,
+        TargetCollisionChannel,
+        Params
+    );
+
+    return Hit.HitObjectHandle.GetLocation() == End;
+}
+
+FRotator UTargetSystemComponent::GetControlRotationOnTarget(TargetInterface Interface) const
+{
+    if (!Interface) return FRotator::ZeroRotator;
+
 	if (!IsValid(OwnerPlayerController))
 	{
 		TS_LOG(Warning, TEXT("UTargetSystemComponent::GetControlRotationOnTarget - OwnerPlayerController is not valid ..."))
@@ -524,22 +615,34 @@ FRotator UTargetSystemComponent::GetControlRotationOnTarget(const AActor* OtherA
 	const FRotator ControlRotation = OwnerPlayerController->GetControlRotation();
 
 	const FVector CharacterLocation = OwnerActor->GetActorLocation();
-	const FVector OtherActorLocation = OtherActor->GetActorLocation();
+    FVector TargetPointLocation = GetTargetOwnerLocation(Interface);
+
+    // for (int32 i = 0; i < GetTargetDetails(Interface).TargetPoints.Num(); ++i)
+    // {
+    //     if (CurrentSocketOnNearestTarget == GetTargetDetails(Interface).TargetPoints[i]->GetName())
+    //     {
+    //         TargetPointLocation = GetTargetDetails(NearestTarget).TargetPoints[i]->GetComponentLocation();
+    //     }
+    // }
 
 	// Find look at rotation
-	const FRotator LookRotation = FRotationMatrix::MakeFromX(OtherActorLocation - CharacterLocation).Rotator();
+	const FRotator LookRotation = FRotationMatrix::MakeFromX(TargetPointLocation - CharacterLocation).Rotator();
 	float Pitch = LookRotation.Pitch;
 	FRotator TargetRotation;
 	if (bAdjustPitchBasedOnDistanceToTargetUsingCurve)
 	{
-		const float Distance = GetDistanceFromCharacter(OtherActor);
-		const float CurveValue = PitchOffsetCurve->GetFloatValue(Distance);
-		Pitch += CurveValue;
-		TargetRotation = FRotator(Pitch, LookRotation.Yaw, ControlRotation.Roll);
+		const float Distance = GetDistanceFromTarget(Interface);
+        const int32 Index = GetPointIndexByName(CurrentSocketOnNearestTarget);
+	    const UCurveFloat* CurvePitch = Index >= 0 && IsValid(GetTargetDetails(Interface).TargetPoints[Index]->GetPitchOffsetCurve()) ?
+	            GetTargetDetails(Interface).TargetPoints[Index]->GetPitchOffsetCurve():
+	            DefaultPitchOffsetCurve;
+
+		const float CurveValue = IsValid(CurvePitch) ? CurvePitch->GetFloatValue(Distance) : 0.f;
+		TargetRotation = FRotator(CurveValue, LookRotation.Yaw, ControlRotation.Roll);
 	}
 	else if (bAdjustPitchBasedOnDistanceToTarget)
 	{
-		const float DistanceToTarget = GetDistanceFromCharacter(OtherActor);
+		const float DistanceToTarget = GetDistanceFromTarget(Interface);
 		const float PitchInRange = (DistanceToTarget * PitchDistanceCoefficient + PitchDistanceOffset) * -1.0f;
 		const float PitchOffset = FMath::Clamp(PitchInRange, PitchMin, PitchMax);
 
@@ -548,69 +651,36 @@ FRotator UTargetSystemComponent::GetControlRotationOnTarget(const AActor* OtherA
 	}
 	else
 	{
-		if (bIgnoreLookInput)
-		{
-			TargetRotation = FRotator(Pitch, LookRotation.Yaw, ControlRotation.Roll);
-		}
-		else
-		{
-			TargetRotation = FRotator(ControlRotation.Pitch, LookRotation.Yaw, ControlRotation.Roll);
-		}
+	    TargetRotation = FRotator(Pitch, LookRotation.Yaw, ControlRotation.Roll);
 	}
 
 	return FMath::RInterpTo(ControlRotation, TargetRotation, GetWorld()->GetDeltaSeconds(), 9.0f);
 }
 
-void UTargetSystemComponent::SetControlRotationOnTarget(AActor* TargetActor) const
+FTargetActorDetails UTargetSystemComponent::GetTargetDetails(const TargetInterface& Interface) const
 {
-	if (!IsValid(OwnerPlayerController))
-	{
-		return;
-	}
-
-	const FRotator ControlRotation = GetControlRotationOnTarget(TargetActor);
-	if (OnTargetSetRotation.IsBound())
-	{
-		OnTargetSetRotation.Broadcast(TargetActor, ControlRotation);
-	}
-	else
-	{
-		OwnerPlayerController->SetControlRotation(ControlRotation);
-	}
+    if (!Interface) return {};
+    return Interface->GetTargetSystemDependencies()->GetTargetActorDetails();
 }
 
-float UTargetSystemComponent::GetDistanceFromCharacter(const AActor* OtherActor) const
+FVector UTargetSystemComponent::GetTargetOwnerLocation(const TargetInterface& Interface) const
 {
-	return OwnerActor->GetDistanceTo(OtherActor);
+    if (!Interface) return FVector::Zero();
+    return Interface->GetTargetSystemDependencies()->GetOwner()->GetActorLocation();
 }
 
-bool UTargetSystemComponent::ShouldBreakLineOfSight() const
+void UTargetSystemComponent::SetControlRotationOnTarget() const
 {
-	if (!LockedOnTargetActor)
-	{
-		return true;
-	}
+	if (!IsValid(OwnerPlayerController)) return;
+    if (!NearestTarget) return;
 
-	TArray<AActor*> ActorsToIgnore = GetAllActorsOfClass(TargetableActors);
-	ActorsToIgnore.Remove(LockedOnTargetActor);
-
-	FHitResult HitResult;
-	const bool bHit = LineTrace(HitResult, LockedOnTargetActor, ActorsToIgnore);
-	if (bHit && HitResult.GetActor() != LockedOnTargetActor)
-	{
-		return true;
-	}
-
-	return false;
+	const FRotator ControlRotation = GetControlRotationOnTarget(NearestTarget);
+    OwnerPlayerController->SetControlRotation(ControlRotation);
 }
 
-void UTargetSystemComponent::BreakLineOfSight()
+float UTargetSystemComponent::GetDistanceFromTarget(const TargetInterface& Interface) const
 {
-	bIsBreakingLineOfSight = false;
-	if (ShouldBreakLineOfSight())
-	{
-		TargetLockOff();
-	}
+	return OwnerActor->GetDistanceTo(Interface->GetTargetSystemDependencies()->GetOwner());
 }
 
 void UTargetSystemComponent::ControlRotation(const bool ShouldControlRotation) const
@@ -620,27 +690,27 @@ void UTargetSystemComponent::ControlRotation(const bool ShouldControlRotation) c
 		return;
 	}
 
-	OwnerPawn->bUseControllerRotationYaw = ShouldControlRotation;
+    if (CharacterRotationMode == ECharacterRotationMode::OrientToMovement)
+    {
+        OwnerPawn->bUseControllerRotationYaw = ShouldControlRotation;
 
-	UCharacterMovementComponent* CharacterMovementComponent = OwnerPawn->FindComponentByClass<UCharacterMovementComponent>();
-	if (CharacterMovementComponent)
-	{
-		CharacterMovementComponent->bOrientRotationToMovement = !ShouldControlRotation;
-	}
+        UCharacterMovementComponent* CharacterMovementComponent = OwnerPawn->FindComponentByClass<UCharacterMovementComponent>();
+        if (IsValid(CharacterMovementComponent))
+        {
+            CharacterMovementComponent->bOrientRotationToMovement = !ShouldControlRotation;
+        }
+    }
 }
 
-bool UTargetSystemComponent::IsInViewport(const AActor* TargetActor) const
+bool UTargetSystemComponent::IsInViewport(TargetInterface Interface) const
 {
-	if (!IsValid(OwnerPlayerController))
-	{
-		return true;
-	}
+	if (!IsValid(OwnerPlayerController)) return true;
 
 	FVector2D ScreenLocation;
-	OwnerPlayerController->ProjectWorldLocationToScreen(TargetActor->GetActorLocation(), ScreenLocation);
+	OwnerPlayerController->ProjectWorldLocationToScreen(GetTargetOwnerLocation(Interface), ScreenLocation);
 
 	FVector2D ViewportSize;
 	GetWorld()->GetGameViewport()->GetViewportSize(ViewportSize);
 
-	return ScreenLocation.X > 0 && ScreenLocation.Y > 0 && ScreenLocation.X < ViewportSize.X && ScreenLocation.Y < ViewportSize.Y;
+	return ScreenLocation.X > 10.f && ScreenLocation.Y > 10.f && ScreenLocation.X < ViewportSize.X && ScreenLocation.Y < ViewportSize.Y;
 }
