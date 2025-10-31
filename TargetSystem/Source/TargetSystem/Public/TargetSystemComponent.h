@@ -39,7 +39,7 @@ class UWidgetComponent;
 class APlayerController;
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class TARGETSYSTEM_API UTargetSystemComponent final: public UActorComponent
+class TARGETSYSTEM_API UTargetSystemComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
@@ -70,7 +70,7 @@ public:
     AActor* GetLockedOnTargetActor() const;
 
     UFUNCTION(BlueprintCallable, Category = "Target System")
-    void TryStartTargetLock();
+    virtual void TryStartTargetLock();
 
     UFUNCTION(BlueprintCallable, Category = "Target System")
     void StopObservingTarget(const bool bIgnoreAutoSwitch = false, const bool bTargetIsDead = false);
@@ -170,6 +170,13 @@ protected:
 	UPROPERTY(BlueprintAssignable, Category = "Target System")
 	FComponentSetRotation OnTargetSetRotation;
 
+	UPROPERTY()
+	TScriptInterface<ITargetSystemInterface> NearestTarget;
+
+protected:
+	void StartObservingTarget();
+	void MessageFinishTargetLock() const;
+
 private:
 	UPROPERTY()
 	AActor* OwnerActor = nullptr;
@@ -185,9 +192,6 @@ private:
 
     UPROPERTY()
     TArray<TScriptInterface<ITargetSystemInterface>> PotentialTargets;
-
-    UPROPERTY()
-    TScriptInterface<ITargetSystemInterface> NearestTarget;
 
 	bool bIsSwitchingTarget = false;
 	bool bTargetLocked = false;
@@ -217,12 +221,11 @@ private:
 	void CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface);
 	void ResetIsSwitchingTarget();
 
-    void StartObservingTarget();
+    
     void UpdateTargetInfo();
     bool TrySwitchBetweenTargetPoints(FVector2D AxisValue);
     void AutoSwitchTarget();
     void StopTargetLock();
-    void MessageFinishTargetLock() const;
 
     void SortPotentialTargetsByDistance(TArray<TScriptInterface<ITargetSystemInterface>>& Array);
     void SortPotentialTargetsByAngle(TArray<TScriptInterface<ITargetSystemInterface>>& Array);
