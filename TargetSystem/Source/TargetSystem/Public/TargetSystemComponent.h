@@ -173,6 +173,9 @@ protected:
 	UPROPERTY()
 	TScriptInterface<ITargetSystemInterface> NearestTarget;
 
+	UPROPERTY()
+	TArray<TScriptInterface<ITargetSystemInterface>> PotentialTargets;
+
 protected:
 	void StartObservingTarget();
 	void MessageFinishTargetLock() const;
@@ -189,9 +192,6 @@ private:
 
 	UPROPERTY()
 	UWidgetComponent* TargetLockedOnWidgetComponent = nullptr;
-
-    UPROPERTY()
-    TArray<TScriptInterface<ITargetSystemInterface>> PotentialTargets;
 
 	bool bIsSwitchingTarget = false;
 	bool bTargetLocked = false;
