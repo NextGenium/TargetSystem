@@ -78,7 +78,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Target System")
     void ControlRotation(bool ShouldControlRotation) const;
 
-    void SwitchTarget(FVector2D AxisValue);
+    virtual void SwitchTarget(FVector2D AxisValue);
 
 protected:
     virtual void BeginPlay() override;
@@ -176,9 +176,14 @@ protected:
 	UPROPERTY()
 	TArray<TScriptInterface<ITargetSystemInterface>> PotentialTargets;
 
+	bool bIsSwitchingTarget = false;
+
 protected:
 	void StartObservingTarget();
 	void MessageFinishTargetLock() const;
+	virtual void AutoSwitchTarget();
+	bool CanSwitchTarget(const FVector2D& AxisValue) const;
+	void ResetIsSwitchingTarget();
 
 private:
 	UPROPERTY()
@@ -192,8 +197,7 @@ private:
 
 	UPROPERTY()
 	UWidgetComponent* TargetLockedOnWidgetComponent = nullptr;
-
-	bool bIsSwitchingTarget = false;
+	
 	bool bTargetLocked = false;
 
     FTimerHandle SwitchingTargetTimerHandle;
@@ -201,7 +205,6 @@ private:
     FTimerHandle BehindWallTimer;
 
     bool CanTargetLock() const;
-    bool CanSwitchTarget(const FVector2D& AxisValue) const;
     bool IsInViewport(TargetInterface TargetActor) const;
     bool ObjectIsTargetable(const TargetInterface Interface) const;
 
@@ -219,12 +222,10 @@ private:
     void AddPotentialTargetsByInterface(const TSubclassOf<AActor>& ActorClass);
     bool LineTrace(const FVector& Start, const FVector& End, FHitResult& Hit) const;
 	void CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface);
-	void ResetIsSwitchingTarget();
 
     
     void UpdateTargetInfo();
     bool TrySwitchBetweenTargetPoints(FVector2D AxisValue);
-    void AutoSwitchTarget();
     void StopTargetLock();
 
     void SortPotentialTargetsByDistance(TArray<TScriptInterface<ITargetSystemInterface>>& Array);
