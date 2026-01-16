@@ -41,7 +41,8 @@ public class TargetSystem : ModuleRules
 				"Engine",
                 "UMG",
                 "Slate",
-				"SlateCore"
+				"SlateCore", 
+				"TargetingSystem", 
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
