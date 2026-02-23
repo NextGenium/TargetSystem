@@ -17,6 +17,8 @@ void UNextTargetSystemComponent::TryStartTargetLock()
 			return;
 		}
 		
+		ClearTargetingHandles();
+		
 		FTargetingSourceContext SourceContext;
 		SourceContext.SourceActor = GetOwner();
 		UTargetLockContext* TargetLockContext = NewObject<UTargetLockContext>(this);
@@ -32,6 +34,7 @@ void UNextTargetSystemComponent::TryStartTargetLock()
 		UTargetingSubsystem::Get(GetWorld())->StartAsyncTargetingRequestWithHandle(
 					TargetingHandle,
 					Delegate);
+		TargetingHandles.Add(TargetingHandle);
 	}
 	else
 	{
@@ -45,6 +48,9 @@ void UNextTargetSystemComponent::SwitchTarget(FVector2D AxisValue)
 	{
 		if (!CanSwitchTarget(AxisValue)) return;
 		if (bIsSwitchingTarget) return;
+		
+		ClearTargetingHandles();
+		
 		FTargetingSourceContext SourceContext;
 		SourceContext.SourceActor = GetOwner();
 		UTargetLockContext* TargetLockContext = NewObject<UTargetLockContext>(this);
@@ -71,6 +77,7 @@ void UNextTargetSystemComponent::SwitchTarget(FVector2D AxisValue)
 				}
 			}
 		});
+		TargetingHandles.Add(TargetingHandle);
 		
 		UTargetingSubsystem::Get(GetWorld())->ExecuteTargetingRequestWithHandle(TargetingHandle, Delegate);
 	}
@@ -91,6 +98,13 @@ void UNextTargetSystemComponent::AutoSwitchTarget()
 	{
 		Super::AutoSwitchTarget();
 	}
+}
+
+void UNextTargetSystemComponent::StopObservingTarget(
+	const bool bIgnoreAutoSwitch, const bool bTargetIsDead)
+{
+	ClearTargetingHandles();
+	Super::StopObservingTarget(bIgnoreAutoSwitch, bTargetIsDead);
 }
 
 void UNextTargetSystemComponent::OnTargetingCompleted(FTargetingRequestHandle Handle)
@@ -118,4 +132,12 @@ void UNextTargetSystemComponent::OnTargetingCompleted(FTargetingRequestHandle Ha
 		return;
 	}
 	StartObservingTarget();
+}
+
+void UNextTargetSystemComponent::ClearTargetingHandles()
+{
+	for (FTargetingRequestHandle& TargetingHandle : TargetingHandles)
+	{
+		TargetingHandle.Reset();	
+	}
 }

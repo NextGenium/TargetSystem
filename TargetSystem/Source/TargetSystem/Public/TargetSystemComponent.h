@@ -73,7 +73,7 @@ public:
     virtual void TryStartTargetLock();
 
     UFUNCTION(BlueprintCallable, Category = "Target System")
-    void StopObservingTarget(const bool bIgnoreAutoSwitch = false, const bool bTargetIsDead = false);
+    virtual void StopObservingTarget(const bool bIgnoreAutoSwitch = false, const bool bTargetIsDead = false);
 
     UFUNCTION(BlueprintCallable, Category = "Target System")
     void ControlRotation(bool ShouldControlRotation) const;

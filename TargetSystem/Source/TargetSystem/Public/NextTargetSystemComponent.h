@@ -20,6 +20,7 @@ public:
 	virtual void TryStartTargetLock() override;
 	virtual void SwitchTarget(FVector2D AxisValue) override;
 	virtual void AutoSwitchTarget() override;
+	virtual void StopObservingTarget(const bool bIgnoreAutoSwitch = false, const bool bTargetIsDead = false) override;
 
 	UFUNCTION()
 	void OnTargetingCompleted(FTargetingRequestHandle Handle);
@@ -32,4 +33,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Target Subsystem",
 		meta=(EditCondition="bUseTargetSubsystem"))
 	UTargetingPreset* TargetingPreset = nullptr;
+	
+private:
+	void ClearTargetingHandles();
+	
+	UPROPERTY()
+	TArray<FTargetingRequestHandle> TargetingHandles;
 };
