@@ -8,6 +8,7 @@
 #include "Components/BillboardComponent.h"
 #include "OverrideCameraDistanceVolume.generated.h"
 
+class UNextTargetSystemComponent;
 class ITargetSystemOwnerInterface;
 class UTargetSystemComponent;
 class ITargetSystemInterface;
@@ -76,7 +77,7 @@ private:
     TScriptInterface<ITargetSystemOwnerInterface> PlayerInterface;
 
     UPROPERTY()
-    UTargetSystemComponent* TargetSystemComponent = nullptr;
+    TObjectPtr<UNextTargetSystemComponent> TargetSystemComponent = nullptr;
 
     FVector CurrentSpringArmSocketOffset = FVector::Zero();
     FTimeline CameraDistanceTimeline;

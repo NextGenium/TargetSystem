@@ -78,6 +78,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Target System")
     void ControlRotation(bool ShouldControlRotation) const;
 
+	UFUNCTION(BlueprintCallable, Category = "Target System")
     virtual void SwitchTarget(FVector2D AxisValue);
 
 protected:

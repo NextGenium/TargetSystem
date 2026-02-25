@@ -6,6 +6,8 @@
 #include "UObject/Interface.h"
 #include "TargetSystemInterface.generated.h"
 
+class UNextTargetSystemComponent;
+class UTargetSystemComponent;
 class UTargetSystemDependencies;
 
 UINTERFACE(Blueprintable)
@@ -19,6 +21,10 @@ class TARGETSYSTEM_API ITargetSystemInterface
 	GENERATED_BODY()
 
 public:
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "NextTargetSystem")
+	UNextTargetSystemComponent* GetTargetSystemComponent() const;
+	virtual UNextTargetSystemComponent* GetTargetSystemComponent_Implementation() const;
+	
     virtual UTargetSystemDependencies* GetTargetSystemDependencies() {return nullptr; }
     virtual bool IsTargetable() const { return false; }
 
