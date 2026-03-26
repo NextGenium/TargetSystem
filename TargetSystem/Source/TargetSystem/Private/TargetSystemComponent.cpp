@@ -96,6 +96,10 @@ void UTargetSystemComponent::StartObservingTarget()
 
 void UTargetSystemComponent::UpdateTargetInfo()
 {
+	if (!IsValid(NearestTarget.GetObject()))
+	{
+		return;
+	}
     FHitResult Hit;
     if(NearestTarget->IsTargetable() && !LineTrace(GetOwner()->GetActorLocation(), GetTargetOwnerLocation(NearestTarget), Hit))
     {
