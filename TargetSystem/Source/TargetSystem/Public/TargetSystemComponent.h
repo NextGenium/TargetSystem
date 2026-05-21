@@ -81,6 +81,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Target System")
     virtual void SwitchTarget(FVector2D AxisValue);
 
+	/** Applies the lock-on widget visibility based on the game.TargetSystem.LockWidget.Enabled CVar. When the widget hasn't spawned yet and the lock is active, this creates it on demand. */
+	void ApplyLockWidgetVisibilityFromCVar(bool bEnabled);
+
 protected:
     virtual void BeginPlay() override;
 

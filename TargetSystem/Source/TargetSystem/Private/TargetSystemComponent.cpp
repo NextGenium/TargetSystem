@@ -12,6 +12,32 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "HAL/IConsoleManager.h"
+#include "UObject/UObjectIterator.h"
+
+namespace TargetSystemLockWidgetCVar
+{
+	// Master toggle for the lock-on indicator widget. Drives both newly-locked targets (creation gated) and the existing widget (visibility hidden when off).
+	static bool bLockWidgetEnabled = true;
+	static FAutoConsoleVariableRef CVarLockWidgetEnabled(
+		TEXT("game.TargetSystem.LockWidget.Enabled"),
+		bLockWidgetEnabled,
+		TEXT("Enable the target-lock indicator widget (UWidgetComponent attached to the locked target). 0 to hide, 1 to show."),
+		FConsoleVariableDelegate::CreateLambda([](IConsoleVariable* Var)
+		{
+			const bool bEnabled = Var->GetBool();
+			for (TObjectIterator<UTargetSystemComponent> It; It; ++It)
+			{
+				UTargetSystemComponent* const Component = *It;
+				if (!IsValid(Component) || Component->HasAnyFlags(RF_ClassDefaultObject))
+				{
+					continue;
+				}
+				Component->ApplyLockWidgetVisibilityFromCVar(bEnabled);
+			}
+		}),
+		ECVF_Default);
+}
 
 UTargetSystemComponent::UTargetSystemComponent()
 {
@@ -427,6 +453,35 @@ bool UTargetSystemComponent::CanSwitchTarget(const FVector2D& AxisValue) const
 	return FMath::Abs(AxisValue.X) >= StartRotatingThreshold || FMath::Abs(AxisValue.Y) >= StartRotatingThreshold;
 }
 
+void UTargetSystemComponent::ApplyLockWidgetVisibilityFromCVar(const bool bEnabled)
+{
+	if (!bEnabled)
+	{
+		if (TargetLockedOnWidgetComponent)
+		{
+			TargetLockedOnWidgetComponent->SetVisibility(false);
+		}
+		return;
+	}
+
+	if (!bTargetLocked)
+	{
+		return;
+	}
+
+	if (TargetLockedOnWidgetComponent)
+	{
+		TargetLockedOnWidgetComponent->SetVisibility(true);
+		return;
+	}
+
+	// Widget was suppressed at lock time — create it now against the live nearest target.
+	if (NearestTarget && NearestTarget.GetObject())
+	{
+		CreateAndAttachTargetLockedOnWidgetComponent(NearestTarget);
+	}
+}
+
 void UTargetSystemComponent::CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface)
 {
     AActor* TargetActor = Interface.GetInterface()->GetTargetSystemDependencies()->GetOwner();
@@ -448,6 +503,12 @@ void UTargetSystemComponent::CreateAndAttachTargetLockedOnWidgetComponent(const 
 	if (!LockedOnWidgetClass)
 	{
 		TS_LOG(Error, TEXT("TargetSystemComponent: Cannot get LockedOnWidgetClass, please ensure it is a valid reference in the Component Properties."));
+		return;
+	}
+
+	// game.TargetSystem.LockWidget.Enabled=0 suppresses the lock-on widget; the lock itself stays active so re-enabling shows the indicator on the live target.
+	if (!TargetSystemLockWidgetCVar::bLockWidgetEnabled)
+	{
 		return;
 	}
 

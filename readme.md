@@ -34,6 +34,12 @@ Check the [Setup wiki page](https://github.com/mklabs/ue4-targetsystemplugin/wik
 - To Grzegorz Szewczyk for his awesome [Dynamic Targeting component](https://www.unrealengine.com/marketplace/dynamic-targeting)
 
 
+## Debug
+
+- `game.TargetSystem.LockWidget.Enabled`
+- 
+ 
+
 ## License
 
 MIT License.
