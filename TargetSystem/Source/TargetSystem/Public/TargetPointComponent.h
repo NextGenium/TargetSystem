@@ -16,7 +16,7 @@ class TARGETSYSTEM_API UTargetPointComponent final : public USceneComponent
 {
     GENERATED_BODY()
 
-public:
+public: 
     UTargetPointComponent();
 
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

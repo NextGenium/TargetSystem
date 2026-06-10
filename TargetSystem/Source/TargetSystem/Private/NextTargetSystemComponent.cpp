@@ -3,7 +3,7 @@
 
 #include "NextTargetSystemComponent.h"
 
-#include "TST_TargetLock.h"
+#include "Targeting/TargetLockContext.h"
 #include "TargetingSystem/TargetingPreset.h"
 #include "TargetingSystem/TargetingSubsystem.h"
 #include "Types/TargetingSystemTypes.h"

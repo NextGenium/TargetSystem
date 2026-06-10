@@ -1,0 +1,30 @@
+// Copyright (c) 2024 NextGenium
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Tasks/SimpleTargetingSelectionTask.h"
+#include "TargetingTask_CollectTargetables.generated.h"
+
+/**
+ * Selection task that collects every actor implementing ITargetSystemInterface
+ * with IsTargetable() == true within SearchRadius of the source actor.
+ *
+ * Replaces the legacy manual UTargetSystemComponent::AddPotentialTargetsByInterface (L1).
+ */
+UCLASS(DisplayName = "Collect Targetable Actors")
+class TARGETSYSTEM_API UTargetingTask_CollectTargetables : public USimpleTargetingSelectionTask
+{
+	GENERATED_BODY()
+
+public:
+	/** Max distance from the source actor at which actors are collected. <= 0 means unlimited. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Targeting")
+	float SearchRadius = 5000.0f;
+
+	/** Only actors of (or derived from) this class are considered. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Targeting")
+	TSubclassOf<AActor> RequiredActorClass = AActor::StaticClass();
+
+	virtual void SelectTargets_Implementation(const FTargetingRequestHandle& TargetingHandle, const FTargetingSourceContext& SourceContext) const override;
+};
