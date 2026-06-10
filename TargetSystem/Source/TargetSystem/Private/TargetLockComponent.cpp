@@ -212,6 +212,7 @@ void UTargetLockComponent::TryStartTargetLock()
 {
     if (!IsValid(TargetingPreset))
     {
+        TS_LOG(Warning, TEXT("[%s] TargetLockComponent: TargetingPreset is not assigned — lock-on cannot run. Assign a TargetingPreset on the component."), *GetName());
         MessageFinishTargetLock();
         return;
     }
@@ -264,7 +265,11 @@ void UTargetLockComponent::SwitchTarget(FVector2D AxisValue)
 {
     if (!CanSwitchTarget(AxisValue)) return;
     if (bIsSwitchingTarget) return;
-    if (!IsValid(TargetingPreset)) return;
+    if (!IsValid(TargetingPreset))
+    {
+        TS_LOG(Warning, TEXT("[%s] TargetLockComponent: TargetingPreset is not assigned — target switch cannot run."), *GetName());
+        return;
+    }
 
     UWorld* World = GetWorld();
     UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
