@@ -339,7 +339,7 @@ void UTargetLockComponent::CreateAndAttachTargetLockedOnWidgetComponent(const Ta
 
     // The reticle attaches to the locked point (the target's first point), seeded in
     // StartObservingTarget; fall back to the first available point.
-    USceneComponent* AttachPoint = LockedPoint ? LockedPoint : TargetPoints[0];
+    USceneComponent* AttachPoint = LockedPoint ? LockedPoint.Get() : TargetPoints[0];
 
 	if (!LockedOnWidgetClass)
 	{
