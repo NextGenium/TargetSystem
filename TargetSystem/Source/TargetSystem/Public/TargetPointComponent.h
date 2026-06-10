@@ -56,13 +56,4 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "Target Point")
     void RemoveStateTag(FGameplayTag Tag);
-
-    // DEPRECATED: legacy manual switch ordering. Kept temporarily so the plugin
-    // stays buildable; removed once switching migrates to tag/screen-sort.
-    int32 GetIndex() const { return Index; }
-
-protected:
-    // DEPRECATED: replaced by PointTags + sort tasks. Do not use in new content.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (DeprecatedProperty, DeprecationMessage = "Use PointTags instead. Index is removed once switching migrates to screen-sort."))
-    int32 Index = 0;
 };
