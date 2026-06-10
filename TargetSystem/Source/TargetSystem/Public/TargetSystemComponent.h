@@ -7,7 +7,6 @@
 #include "Components/ActorComponent.h"
 #include "TargetSystemComponent.generated.h"
 
-struct FTargetActorDetails;
 using TargetInterface = TScriptInterface<ITargetSystemInterface>;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnFinishTargetLock);
@@ -213,7 +212,7 @@ private:
     float GetAngleUsingCameraRotation(const FVector& Location) const;
     float GetAngleUsingCharacterRotation(const FVector& Location) const;
     FRotator GetControlRotationOnTarget(TargetInterface Interface) const;
-    FTargetActorDetails GetTargetDetails(const TargetInterface& Interface) const;
+    AActor* GetTargetOwnerActor(const TargetInterface& Interface) const;
     FVector GetTargetOwnerLocation(const TargetInterface& Interface) const;
 
     void SetControlRotationOnTarget() const;

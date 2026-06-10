@@ -6,7 +6,6 @@
 #include "UObject/Interface.h"
 #include "TargetSystemInterface.generated.h"
 
-class UTargetSystemDependencies;
 class UTargetPointComponent;
 struct FTargetPointQuery;
 
@@ -36,9 +35,8 @@ public:
     virtual void OnTargetLockBegin(AActor* LockOwner) {}
     virtual void OnTargetLockEnd(AActor* LockOwner) {}
 
-    // DEPRECATED: data-wrapper access. Removed once UTargetSystemDependencies is
-    // dropped (Step 6) and the component refactor lands (Step 8). Use GetTargetPoints.
-    virtual UTargetSystemDependencies* GetTargetSystemDependencies() { return nullptr; }
+    // DEPRECATED: lock-state hooks on the target. Removed when the component
+    // refactor lands (Step 8) and the lifecycle moves to OnTargetLockBegin/End.
     virtual void StartTargetable() {}
     virtual void StopTargetable() {}
 };

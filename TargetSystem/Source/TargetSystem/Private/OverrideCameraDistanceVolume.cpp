@@ -3,7 +3,6 @@
 #include "OverrideCameraDistanceVolume.h"
 
 #include "TargetSystemComponent.h"
-#include "TargetSystemDependencies.h"
 #include "TargetSystemInterface.h"
 #include "TargetSystemOwnerInterface.h"
 #include "Components/BoxComponent.h"
@@ -42,7 +41,7 @@ void AOverrideCameraDistanceVolume::BeginPlay()
         {
             auto Interface = StaticCast<TScriptInterface<ITargetSystemInterface>>(Actor);
             if (!Interface) continue;
-            if (!Interface->GetTargetSystemDependencies()->GetTargetActorDetails().bCouldBeTarget) continue;
+            if (!Interface->IsTargetable()) continue;
 
             TargetsInVolume.Add(Interface);
         }
