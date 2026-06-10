@@ -16,7 +16,7 @@ public:
     FTargetActorDetails GetTargetActorDetails() const { return TargetActorDetails; }
     void SetIsTargetable(bool Value) {TargetActorDetails.bIsTargetable = Value; }
 
-    void SetUp(TArray<UBTargetPoint*> TargetPoints);
+    void SetUp(TArray<UTargetPointComponent*> TargetPoints);
 
 protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Details")

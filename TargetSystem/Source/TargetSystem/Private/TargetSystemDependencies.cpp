@@ -4,17 +4,17 @@
 
 #include "TargetSystemDependencies.h"
 
-#include "BTargetPoint.h"
+#include "TargetPointComponent.h"
 #include "TargetSystemLog.h"
 
 void UTargetSystemDependencies::SetUp(
-    TArray<UBTargetPoint*> _TargetPoints
+    TArray<UTargetPointComponent*> _TargetPoints
 )
 {
     if (!_TargetPoints.IsEmpty())
     {
         bool IsValidTargetPointName = false;
-        for (UBTargetPoint* TargetPoint : _TargetPoints)
+        for (UTargetPointComponent* TargetPoint : _TargetPoints)
         {
             if (!IsValid(TargetPoint)) continue;
 
@@ -28,7 +28,7 @@ void UTargetSystemDependencies::SetUp(
             return;
         }
 
-        TargetActorDetails.TargetPoints.Sort([this](const UBTargetPoint& A, const UBTargetPoint& B)
+        TargetActorDetails.TargetPoints.Sort([this](const UTargetPointComponent& A, const UTargetPointComponent& B)
             {
                 if (A.GetIndex() == B.GetIndex())
                 {

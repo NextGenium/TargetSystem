@@ -1,7 +1,7 @@
 // Copyright 2018-2021 Mickael Daniel. All Rights Reserved.
 
 #include "TargetSystemComponent.h"
-#include "BTargetPoint.h"
+#include "TargetPointComponent.h"
 #include "..\Public\TargetSystemInterface.h"
 #include "Components/WidgetComponent.h"
 #include "EngineUtils.h"
@@ -429,7 +429,7 @@ void UTargetSystemComponent::CreateAndAttachTargetLockedOnWidgetComponent(const 
     AActor* TargetActor = Interface.GetInterface()->GetTargetSystemDependencies()->GetOwner();
     if (!IsValid(TargetActor)) return;
 
-    const TArray<UBTargetPoint*> TargetPoints = GetTargetDetails(Interface).TargetPoints;
+    const TArray<UTargetPointComponent*> TargetPoints = GetTargetDetails(Interface).TargetPoints;
     if (TargetPoints.IsEmpty()) return;
 
     int32 Index = 0;
@@ -634,8 +634,8 @@ FRotator UTargetSystemComponent::GetControlRotationOnTarget(TargetInterface Inte
 	{
 		const float Distance = GetDistanceFromTarget(Interface);
         const int32 Index = GetPointIndexByName(CurrentSocketOnNearestTarget);
-	    const UCurveFloat* CurvePitch = Index >= 0 && IsValid(GetTargetDetails(Interface).TargetPoints[Index]->GetPitchOffsetCurve()) ?
-	            GetTargetDetails(Interface).TargetPoints[Index]->GetPitchOffsetCurve():
+	    const UCurveFloat* CurvePitch = Index >= 0 && IsValid(GetTargetDetails(Interface).TargetPoints[Index]->GetLockOnPitchOffsetCurve()) ?
+	            GetTargetDetails(Interface).TargetPoints[Index]->GetLockOnPitchOffsetCurve():
 	            DefaultPitchOffsetCurve;
 
 		const float CurveValue = IsValid(CurvePitch) ? CurvePitch->GetFloatValue(Distance) : 0.f;

@@ -29,6 +29,7 @@ public class TargetSystem : ModuleRules
 			new string[]
 			{
 				"Core",
+				"GameplayTags",
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);

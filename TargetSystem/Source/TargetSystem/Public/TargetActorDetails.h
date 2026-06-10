@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "TargetActorDetails.generated.h"
 
-class UBTargetPoint;
+class UTargetPointComponent;
 
 USTRUCT(Blueprintable)
 struct FTargetActorDetails
@@ -19,7 +19,7 @@ struct FTargetActorDetails
     FString StartTargetPointName = "None";
 
     UPROPERTY()
-    TArray<UBTargetPoint*> TargetPoints{};
+    TArray<UTargetPointComponent*> TargetPoints{};
 
     bool bIsTargetable = false;
 };
