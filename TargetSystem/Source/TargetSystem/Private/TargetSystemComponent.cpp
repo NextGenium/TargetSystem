@@ -17,7 +17,8 @@ UTargetSystemComponent::UTargetSystemComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
 
-    LockedOnWidgetClass = StaticLoadClass(UObject::StaticClass(), nullptr, TEXT("/TargetSystem/UI/WBP_LockOn.WBP_LockOn_C"));
+    // LockedOnWidgetClass is assigned project-side via the EditAnywhere UPROPERTY.
+    // The plugin ships no Content, so no default widget is loaded here.
     RequiredClass = APawn::StaticClass();
     TargetCollisionChannel = ECC_Pawn;
 }
