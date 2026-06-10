@@ -26,7 +26,7 @@ void UTargetingTask_CollectTargetables::SelectTargets_Implementation(
 
 	const FVector SourceLocation = Source->GetActorLocation();
 	const float RadiusSq = SearchRadius * SearchRadius;
-	const TSubclassOf<AActor> ActorClass = RequiredActorClass ? RequiredActorClass : AActor::StaticClass();
+	const TSubclassOf<AActor> ActorClass = RequiredActorClass ? RequiredActorClass : TSubclassOf<AActor>(AActor::StaticClass());
 
 	for (TActorIterator<AActor> It(World, ActorClass); It; ++It)
 	{
