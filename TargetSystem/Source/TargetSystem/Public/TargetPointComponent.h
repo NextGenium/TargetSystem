@@ -17,12 +17,16 @@ class TARGETSYSTEM_API UTargetPointComponent final : public USceneComponent
     GENERATED_BODY()
 
 public:
+    UTargetPointComponent();
+
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
     // Semantic identification of the point (design-time): Point.Head, Point.Body...
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target Point", meta = (Categories = "TargetSystem.Point"))
     FGameplayTagContainer PointTags;
 
-    // Runtime blockers (replicated push-model in a later step): Block.Stunned...
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target Point", meta = (Categories = "TargetSystem.Block"))
+    // Runtime blockers, replicated push-model (dirtied via Add/RemoveStateTag): Block.Stunned...
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "Target Point", meta = (Categories = "TargetSystem.Block"))
     FGameplayTagContainer StateTags;
 
     // Design-time metadata: Meta.PreferredForLockOn, Meta.SkipInSwitching...

@@ -2,6 +2,22 @@
 
 #include "TargetPointComponent.h"
 #include "TargetPointQuery.h"
+#include "Net/UnrealNetwork.h"
+#include "Net/Core/PushModel/PushModel.h"
+
+UTargetPointComponent::UTargetPointComponent()
+{
+    SetIsReplicatedByDefault(true);
+}
+
+void UTargetPointComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+    FDoRepLifetimeParams Params;
+    Params.bIsPushBased = true;
+    DOREPLIFETIME_WITH_PARAMS_FAST(UTargetPointComponent, StateTags, Params);
+}
 
 bool UTargetPointComponent::MatchesQuery(const FTargetPointQuery& Query) const
 {
@@ -40,13 +56,17 @@ bool UTargetPointComponent::MatchesQuery(const FTargetPointQuery& Query) const
 
 void UTargetPointComponent::AddStateTag(FGameplayTag Tag)
 {
-    if (Tag.IsValid())
+    if (Tag.IsValid() && !StateTags.HasTagExact(Tag))
     {
         StateTags.AddTag(Tag);
+        MARK_PROPERTY_DIRTY_FROM_NAME(UTargetPointComponent, StateTags, this);
     }
 }
 
 void UTargetPointComponent::RemoveStateTag(FGameplayTag Tag)
 {
-    StateTags.RemoveTag(Tag);
+    if (StateTags.RemoveTag(Tag))
+    {
+        MARK_PROPERTY_DIRTY_FROM_NAME(UTargetPointComponent, StateTags, this);
+    }
 }
