@@ -102,7 +102,10 @@ void AOverrideCameraDistanceVolume::DeactivateVolume()
 
     bIsActivate = false;
     CameraDistanceTimeline.Reverse();
-    PlayerInterface->GetTargetSystemComponent()->OnTargetIsDead.Remove( this, "ChangeTargetsInVolume");
+    if (UTargetLockComponent* TargetComp = ITargetSystemOwnerInterface::Execute_GetTargetSystemComponent(PlayerInterface.GetObject()))
+    {
+        TargetComp->OnTargetIsDead.Remove(this, "ChangeTargetsInVolume");
+    }
 
     if (IsValid(InteractionVolume))
     {
@@ -136,16 +139,19 @@ void AOverrideCameraDistanceVolume::OnInteractionVolumeOverlapEnd(UPrimitiveComp
 
     bIsActivate = false;
     CameraDistanceTimeline.Reverse();
-    PlayerInterface->GetTargetSystemComponent()->OnTargetIsDead.Remove( this, "ChangeTargetsInVolume");
+    if (UTargetLockComponent* TargetComp = ITargetSystemOwnerInterface::Execute_GetTargetSystemComponent(PlayerInterface.GetObject()))
+    {
+        TargetComp->OnTargetIsDead.Remove(this, "ChangeTargetsInVolume");
+    }
 }
 
 void AOverrideCameraDistanceVolume:: StartLogic()
 {
     bIsActivate = true;
 
-    if (IsValid(PlayerInterface->GetTargetSystemComponent()))
+    if (UTargetLockComponent* TargetComp = ITargetSystemOwnerInterface::Execute_GetTargetSystemComponent(PlayerInterface.GetObject()))
     {
-        PlayerInterface->GetTargetSystemComponent()->OnTargetIsDead.AddDynamic( this, &AOverrideCameraDistanceVolume::ChangeTargetsInVolume);
+        TargetComp->OnTargetIsDead.AddDynamic(this, &AOverrideCameraDistanceVolume::ChangeTargetsInVolume);
     }
 
     CurrentSpringArmSocketOffset = PlayerInterface->GetCameraLocation();
