@@ -8,7 +8,7 @@
 #include "GameFramework/PlayerController.h"
 
 #include "TargetPointComponent.h"
-#include "TargetSystemComponent.h"
+#include "TargetLockComponent.h"
 #include "TargetSystemInterface.h"
 
 TSharedRef<FGameplayDebuggerCategory> FGameplayDebuggerCategory_TargetSystem::MakeInstance()
@@ -25,10 +25,10 @@ void FGameplayDebuggerCategory_TargetSystem::CollectData(APlayerController* Owne
 		return;
 	}
 
-	UTargetSystemComponent* Component = PlayerPawn->FindComponentByClass<UTargetSystemComponent>();
+	UTargetLockComponent* Component = PlayerPawn->FindComponentByClass<UTargetLockComponent>();
 	if (!Component)
 	{
-		AddTextLine(FString::Printf(TEXT("{red}'%s' has no UTargetSystemComponent"), *GetNameSafe(PlayerPawn)));
+		AddTextLine(FString::Printf(TEXT("{red}'%s' has no UTargetLockComponent"), *GetNameSafe(PlayerPawn)));
 		return;
 	}
 

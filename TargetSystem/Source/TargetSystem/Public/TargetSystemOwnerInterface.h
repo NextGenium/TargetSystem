@@ -7,7 +7,7 @@
 #include "TargetSystemOwnerInterface.generated.h"
 
 class USpringArmComponent;
-class UTargetSystemComponent;
+class UTargetLockComponent;
 
 UINTERFACE(Blueprintable)
 class UTargetSystemOwnerInterface : public UInterface
@@ -20,7 +20,7 @@ class TARGETSYSTEM_API ITargetSystemOwnerInterface
     GENERATED_BODY()
 
 public:
-    virtual UTargetSystemComponent* GetTargetSystemComponent() const { return nullptr; }
+    virtual UTargetLockComponent* GetTargetSystemComponent() const { return nullptr; }
     virtual FVector GetCameraLocation() const { return {}; }
 
     virtual void ChangeCameraLocation(const FVector& Location) {}

@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "TargetSystemInterface.h"
 #include "Components/ActorComponent.h"
-#include "TargetSystemComponent.generated.h"
+#include "TargetLockComponent.generated.h"
 
 using TargetInterface = TScriptInterface<ITargetSystemInterface>;
 
@@ -36,14 +36,17 @@ enum class ECharacterRotationMode : uint8
 class UUserWidget;
 class UWidgetComponent;
 class APlayerController;
+class UTargetingPreset;
+class UTargetPointComponent;
+struct FTargetingRequestHandle;
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class TARGETSYSTEM_API UTargetSystemComponent : public UActorComponent
+class TARGETSYSTEM_API UTargetLockComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UTargetSystemComponent();
+	UTargetLockComponent();
 
     void SetUp(
         bool bAdjustPitchBasedOnDistanceToTarget,
@@ -105,6 +108,16 @@ protected:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     float BreakLineOfSightDelay = 2.0f;
+
+    // Target Subsystem (GameplayTargetingSystem). When true, selection/switch run through
+    // TargetingPreset; when false, the manual Souls-like search below is used as a fallback.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Target Subsystem",
+        meta = (InlineEditConditionToggle))
+    bool bUseTargetSubsystem = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Target Subsystem",
+        meta = (EditCondition = "bUseTargetSubsystem"))
+    TObjectPtr<UTargetingPreset> TargetingPreset = nullptr;
 
     // Optimization
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Optimization")
@@ -175,6 +188,11 @@ protected:
 	UPROPERTY()
 	TArray<TScriptInterface<ITargetSystemInterface>> PotentialTargets;
 
+	// Lock-on point backing the active target, when a SelectTargetPoint task baked one into
+	// the result. Drives the per-point pitch curve; null with the single lock-on preset.
+	UPROPERTY()
+	TObjectPtr<UTargetPointComponent> LockedPoint = nullptr;
+
 	bool bIsSwitchingTarget = false;
 
 protected:
@@ -183,6 +201,11 @@ protected:
 	virtual void AutoSwitchTarget();
 	bool CanSwitchTarget(const FVector2D& AxisValue) const;
 	void ResetIsSwitchingTarget();
+
+	// Subsystem path: async lock-on result + sync target-switch result callbacks.
+	UFUNCTION()
+	void OnTargetingCompleted(FTargetingRequestHandle Handle);
+	void OnSwitchTargetingCompleted(FTargetingRequestHandle Handle);
 
 private:
 	UPROPERTY()
@@ -217,6 +240,10 @@ private:
 
     void SetControlRotationOnTarget() const;
     void SetupLocalPlayerController();
+
+    // Pulls valid actors out of a finished targeting request; first valid is returned,
+    // all valid are appended to OutTargets, and LockedPoint is set from the first result.
+    AActor* ExtractTargetingResults(FTargetingRequestHandle Handle, TArray<TargetInterface>& OutTargets);
 
     void AddPotentialTargetsByInterface(const TSubclassOf<AActor>& ActorClass);
     bool LineTrace(const FVector& Start, const FVector& End, FHitResult& Hit) const;

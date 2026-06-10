@@ -13,7 +13,7 @@
 #include "UObject/UObjectIterator.h"
 
 #include "TargetPointComponent.h"
-#include "TargetSystemComponent.h"
+#include "TargetLockComponent.h"
 #include "TargetSystemInterface.h"
 
 static TAutoConsoleVariable<int32> CVarTargetSystemDebugDraw(
@@ -30,7 +30,7 @@ namespace
 {
 	FTSTicker::FDelegateHandle GTickerHandle;
 
-	void DrawForComponent(UTargetSystemComponent* Component, int32 Level)
+	void DrawForComponent(UTargetLockComponent* Component, int32 Level)
 	{
 		if (!IsValid(Component) || !Component->IsLocked())
 		{
@@ -95,9 +95,9 @@ namespace
 			return true;
 		}
 
-		for (TObjectIterator<UTargetSystemComponent> It; It; ++It)
+		for (TObjectIterator<UTargetLockComponent> It; It; ++It)
 		{
-			UTargetSystemComponent* Component = *It;
+			UTargetLockComponent* Component = *It;
 			if (!IsValid(Component))
 			{
 				continue;

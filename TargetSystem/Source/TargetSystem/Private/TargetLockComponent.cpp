@@ -1,6 +1,6 @@
 // Copyright 2018-2021 Mickael Daniel. All Rights Reserved.
 
-#include "TargetSystemComponent.h"
+#include "TargetLockComponent.h"
 #include "TargetPointComponent.h"
 #include "TargetSystemInterface.h"
 #include "Components/WidgetComponent.h"
@@ -10,8 +10,12 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "Targeting/TargetLockContext.h"
+#include "TargetingSystem/TargetingPreset.h"
+#include "TargetingSystem/TargetingSubsystem.h"
+#include "Types/TargetingSystemTypes.h"
 
-UTargetSystemComponent::UTargetSystemComponent()
+UTargetLockComponent::UTargetLockComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
 
@@ -21,7 +25,7 @@ UTargetSystemComponent::UTargetSystemComponent()
     TargetCollisionChannel = ECC_Pawn;
 }
 
-void UTargetSystemComponent::SetUp(
+void UTargetLockComponent::SetUp(
     bool _bAdjustPitchBasedOnDistanceToTarget,
     bool _bAdjustPitchBasedOnDistanceToTargetUsingCurve
 )
@@ -30,7 +34,7 @@ void UTargetSystemComponent::SetUp(
     bAdjustPitchBasedOnDistanceToTargetUsingCurve = _bAdjustPitchBasedOnDistanceToTargetUsingCurve;
 }
 
-void UTargetSystemComponent::BeginPlay()
+void UTargetLockComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	OwnerActor = GetOwner();
@@ -55,7 +59,7 @@ void UTargetSystemComponent::BeginPlay()
 	SetupLocalPlayerController();
 }
 
-void UTargetSystemComponent::TickComponent(const float DeltaTime, const ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void UTargetLockComponent::TickComponent(const float DeltaTime, const ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
@@ -64,12 +68,12 @@ void UTargetSystemComponent::TickComponent(const float DeltaTime, const ELevelTi
     SetControlRotationOnTarget();
 }
 
-bool UTargetSystemComponent::CanTargetLock() const
+bool UTargetLockComponent::CanTargetLock() const
 {
     return !PotentialTargets.IsEmpty();
 }
 
-void UTargetSystemComponent::StartObservingTarget()
+void UTargetLockComponent::StartObservingTarget()
 {
     bTargetLocked = true;
     NearestTarget->StartTargetable();
@@ -94,10 +98,10 @@ void UTargetSystemComponent::StartObservingTarget()
 
     CreateAndAttachTargetLockedOnWidgetComponent(NearestTarget);
 
-    GetWorld()->GetTimerManager().SetTimer(ObservingTimer, this, &UTargetSystemComponent::UpdateTargetInfo, TimerTick, true);
+    GetWorld()->GetTimerManager().SetTimer(ObservingTimer, this, &UTargetLockComponent::UpdateTargetInfo, TimerTick, true);
 }
 
-void UTargetSystemComponent::UpdateTargetInfo()
+void UTargetLockComponent::UpdateTargetInfo()
 {
     FHitResult Hit;
     if(NearestTarget->IsTargetable() && !LineTrace(GetOwner()->GetActorLocation(), GetTargetOwnerLocation(NearestTarget), Hit))
@@ -115,7 +119,7 @@ void UTargetSystemComponent::UpdateTargetInfo()
     StopObservingTarget(false, true);
 }
 
-void UTargetSystemComponent::StopObservingTarget(const bool bIgnoreAutoSwitch, const bool bTargetIsDead)
+void UTargetLockComponent::StopObservingTarget(const bool bIgnoreAutoSwitch, const bool bTargetIsDead)
 {
     if (NearestTarget)
     {
@@ -152,7 +156,7 @@ void UTargetSystemComponent::StopObservingTarget(const bool bIgnoreAutoSwitch, c
     StopTargetLock();
 }
 
-void UTargetSystemComponent::MessageFinishTargetLock() const
+void UTargetLockComponent::MessageFinishTargetLock() const
 {
     if (OnFinishTargetLock.IsBound())
     {
@@ -160,8 +164,106 @@ void UTargetSystemComponent::MessageFinishTargetLock() const
     }
 }
 
-void UTargetSystemComponent::TryStartTargetLock()
+AActor* UTargetLockComponent::ExtractTargetingResults(FTargetingRequestHandle Handle, TArray<TargetInterface>& OutTargets)
 {
+    OutTargets.Reset();
+    LockedPoint = nullptr;
+
+    UWorld* World = GetWorld();
+    UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
+    if (!Subsystem)
+    {
+        return nullptr;
+    }
+
+    TArray<AActor*> ResultActors;
+    Subsystem->GetTargetingResultsActors(Handle, ResultActors);
+
+    AActor* First = nullptr;
+    for (AActor* Actor : ResultActors)
+    {
+        if (!IsValid(Actor)) continue;
+        if (!First) First = Actor;
+        OutTargets.Add(Actor);
+    }
+
+    // Best-effort: if a SelectTargetPoint task baked a point component into the first
+    // result, track it for the pitch-offset curve. Null with the single lock-on preset.
+    if (const FTargetingDefaultResultsSet* Results = FTargetingDefaultResultsSet::Find(Handle))
+    {
+        if (Results->TargetResults.Num() > 0)
+        {
+            LockedPoint = Cast<UTargetPointComponent>(Results->TargetResults[0].HitResult.Component.Get());
+        }
+    }
+
+    return First;
+}
+
+void UTargetLockComponent::OnTargetingCompleted(FTargetingRequestHandle Handle)
+{
+    PotentialTargets.Reset();
+    AActor* First = ExtractTargetingResults(Handle, PotentialTargets);
+    if (!First)
+    {
+        MessageFinishTargetLock();
+        return;
+    }
+
+    NearestTarget = First;
+    StartObservingTarget();
+}
+
+void UTargetLockComponent::OnSwitchTargetingCompleted(FTargetingRequestHandle Handle)
+{
+    TArray<TargetInterface> Results;
+    AActor* First = ExtractTargetingResults(Handle, Results);
+    if (!First)
+    {
+        return;
+    }
+
+    bIsSwitchingTarget = true;
+    StopObservingTarget();
+    NearestTarget = First;
+    StartObservingTarget();
+    ResetIsSwitchingTarget();
+}
+
+void UTargetLockComponent::TryStartTargetLock()
+{
+    if (bUseTargetSubsystem)
+    {
+        if (!IsValid(TargetingPreset))
+        {
+            MessageFinishTargetLock();
+            return;
+        }
+
+        UWorld* World = GetWorld();
+        UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
+        if (!Subsystem)
+        {
+            MessageFinishTargetLock();
+            return;
+        }
+
+        FTargetingSourceContext SourceContext;
+        SourceContext.SourceActor = GetOwner();
+        UTargetLockContext* TargetLockContext = NewObject<UTargetLockContext>(this);
+        TargetLockContext->Mode = ETargetSwitchMode::LockOn;
+        SourceContext.SourceObject = TargetLockContext;
+
+        const FTargetingRequestHandle TargetingHandle =
+            UTargetingSubsystem::MakeTargetRequestHandle(TargetingPreset, SourceContext);
+        const FTargetingRequestDelegate Delegate = FTargetingRequestDelegate::CreateUObject(
+            this, &UTargetLockComponent::OnTargetingCompleted);
+
+        Subsystem->StartAsyncTargetingRequestWithHandle(TargetingHandle, Delegate);
+        return;
+    }
+
+    // Manual fallback (Souls-like search). Retires once the subsystem path is verified.
     AddPotentialTargetsByInterface(RequiredClass);
     if (!CanTargetLock())
     {
@@ -179,7 +281,7 @@ void UTargetSystemComponent::TryStartTargetLock()
     StartObservingTarget();
 }
 
-void UTargetSystemComponent::StopTargetLock()
+void UTargetLockComponent::StopTargetLock()
 {
     SetupLocalPlayerController();
 
@@ -201,9 +303,36 @@ void UTargetSystemComponent::StopTargetLock()
     MessageFinishTargetLock();
 }
 
-void UTargetSystemComponent::SwitchTarget(FVector2D AxisValue)
+void UTargetLockComponent::SwitchTarget(FVector2D AxisValue)
 {
     if (!CanSwitchTarget(AxisValue)) return;
+
+    if (bUseTargetSubsystem)
+    {
+        if (bIsSwitchingTarget) return;
+        if (!IsValid(TargetingPreset)) return;
+
+        UWorld* World = GetWorld();
+        UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
+        if (!Subsystem) return;
+
+        FTargetingSourceContext SourceContext;
+        SourceContext.SourceActor = GetOwner();
+        UTargetLockContext* TargetLockContext = NewObject<UTargetLockContext>(this);
+        TargetLockContext->CurrentTarget = Cast<AActor>(NearestTarget.GetObject());
+        TargetLockContext->Mode = AxisValue.X > 0.f ? ETargetSwitchMode::SwitchRight : ETargetSwitchMode::SwitchLeft;
+        SourceContext.SourceObject = TargetLockContext;
+
+        const FTargetingRequestHandle TargetingHandle =
+            UTargetingSubsystem::MakeTargetRequestHandle(TargetingPreset, SourceContext);
+        const FTargetingRequestDelegate Delegate = FTargetingRequestDelegate::CreateUObject(
+            this, &UTargetLockComponent::OnSwitchTargetingCompleted);
+
+        Subsystem->ExecuteTargetingRequestWithHandle(TargetingHandle, Delegate);
+        return;
+    }
+
+    // Manual fallback.
     if (TrySwitchBetweenTargetPoints(AxisValue)) return;
     if (PotentialTargets.Num() <= 1) return;
     if (bIsSwitchingTarget) return;
@@ -234,8 +363,14 @@ void UTargetSystemComponent::SwitchTarget(FVector2D AxisValue)
     ResetIsSwitchingTarget();
 }
 
-void UTargetSystemComponent::AutoSwitchTarget()
+void UTargetLockComponent::AutoSwitchTarget()
 {
+    if (bUseTargetSubsystem)
+    {
+        TryStartTargetLock();
+        return;
+    }
+
     const TScriptInterface<ITargetSystemInterface> NewTarget = FindNearestTarget();
     if (!NewTarget)
     {
@@ -249,7 +384,7 @@ void UTargetSystemComponent::AutoSwitchTarget()
     ResetIsSwitchingTarget();
 }
 
-bool UTargetSystemComponent::TrySwitchBetweenTargetPoints(FVector2D AxisValue)
+bool UTargetLockComponent::TrySwitchBetweenTargetPoints(FVector2D AxisValue)
 {
     if (!NearestTarget) return false;
 
@@ -294,7 +429,7 @@ bool UTargetSystemComponent::TrySwitchBetweenTargetPoints(FVector2D AxisValue)
     return true;
 }
 
-TScriptInterface<ITargetSystemInterface> UTargetSystemComponent::FindByHorizontal(TArray<TargetInterface> LookTargets, float AxisValue) const
+TScriptInterface<ITargetSystemInterface> UTargetLockComponent::FindByHorizontal(TArray<TargetInterface> LookTargets, float AxisValue) const
 {
     TScriptInterface<ITargetSystemInterface> NewNearestTarget = nullptr;
 
@@ -320,7 +455,7 @@ TScriptInterface<ITargetSystemInterface> UTargetSystemComponent::FindByHorizonta
     return NewNearestTarget;
 }
 
-TScriptInterface<ITargetSystemInterface> UTargetSystemComponent::FindByVertical(TArray<TargetInterface> LookTargets, FVector2D AxisValue) const
+TScriptInterface<ITargetSystemInterface> UTargetLockComponent::FindByVertical(TArray<TargetInterface> LookTargets, FVector2D AxisValue) const
 {
     TScriptInterface<ITargetSystemInterface> NewNearestTarget = nullptr;
 
@@ -357,18 +492,18 @@ TScriptInterface<ITargetSystemInterface> UTargetSystemComponent::FindByVertical(
     return NewNearestTarget;
 }
 
-AActor* UTargetSystemComponent::GetLockedOnTargetActor() const
+AActor* UTargetLockComponent::GetLockedOnTargetActor() const
 {
     if (NearestTarget == nullptr) return nullptr;
 	return GetTargetOwnerActor(NearestTarget);
 }
 
-bool UTargetSystemComponent::IsLocked() const
+bool UTargetLockComponent::IsLocked() const
 {
 	return bTargetLocked && NearestTarget;
 }
 
-float UTargetSystemComponent::GetAngleUsingCameraRotation(const FVector& Location) const
+float UTargetLockComponent::GetAngleUsingCameraRotation(const FVector& Location) const
 {
     const UCameraComponent* CameraComponent = OwnerActor->FindComponentByClass<UCameraComponent>();
     if (!IsValid(CameraComponent))
@@ -388,7 +523,7 @@ float UTargetSystemComponent::GetAngleUsingCameraRotation(const FVector& Locatio
     return YawAngle;
 }
 
-float UTargetSystemComponent::GetAngleUsingCharacterRotation(const FVector& Location) const
+float UTargetLockComponent::GetAngleUsingCharacterRotation(const FVector& Location) const
 {
     const FRotator CharacterRotation = OwnerActor->GetActorRotation();
     const FRotator LookAtRotation = FindLookAtRotation(OwnerActor->GetActorLocation(), Location);
@@ -402,19 +537,19 @@ float UTargetSystemComponent::GetAngleUsingCharacterRotation(const FVector& Loca
     return YawAngle;
 }
 
-FRotator UTargetSystemComponent::FindLookAtRotation(const FVector Start, const FVector Target)
+FRotator UTargetLockComponent::FindLookAtRotation(const FVector Start, const FVector Target)
 {
 	return FRotationMatrix::MakeFromX(Target - Start).Rotator();
 }
 
-void UTargetSystemComponent::ResetIsSwitchingTarget()
+void UTargetLockComponent::ResetIsSwitchingTarget()
 {
     if (!SwitchingTargetTimerHandle.IsValid())
     {
         GetWorld()->GetTimerManager().SetTimer(
              SwitchingTargetTimerHandle,
              this,
-             &UTargetSystemComponent::ResetIsSwitchingTarget,
+             &UTargetLockComponent::ResetIsSwitchingTarget,
              bIsSwitchingTarget ? 0.25f : 0.5f,
              false
          );
@@ -425,12 +560,12 @@ void UTargetSystemComponent::ResetIsSwitchingTarget()
 	bIsSwitchingTarget = false;
 }
 
-bool UTargetSystemComponent::CanSwitchTarget(const FVector2D& AxisValue) const
+bool UTargetLockComponent::CanSwitchTarget(const FVector2D& AxisValue) const
 {
 	return FMath::Abs(AxisValue.X) >= StartRotatingThreshold || FMath::Abs(AxisValue.Y) >= StartRotatingThreshold;
 }
 
-void UTargetSystemComponent::CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface)
+void UTargetLockComponent::CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface)
 {
     AActor* TargetActor = GetTargetOwnerActor(Interface);
     if (!IsValid(TargetActor)) return;
@@ -474,7 +609,7 @@ void UTargetSystemComponent::CreateAndAttachTargetLockedOnWidgetComponent(const 
 	TargetLockedOnWidgetComponent->RegisterComponent();
 }
 
-void UTargetSystemComponent::AddPotentialTargetsByInterface(const TSubclassOf<AActor>& ActorClass)
+void UTargetLockComponent::AddPotentialTargetsByInterface(const TSubclassOf<AActor>& ActorClass)
 {
 	for (TActorIterator ActorIterator(GetWorld(), ActorClass); ActorIterator; ++ActorIterator)
 	{
@@ -487,13 +622,13 @@ void UTargetSystemComponent::AddPotentialTargetsByInterface(const TSubclassOf<AA
 	}
 }
 
-bool UTargetSystemComponent::ObjectIsTargetable(const TScriptInterface<ITargetSystemInterface> Actor) const
+bool UTargetLockComponent::ObjectIsTargetable(const TScriptInterface<ITargetSystemInterface> Actor) const
 {
     if(!Actor) return false;
     return Actor->IsTargetable();
 }
 
-int32 UTargetSystemComponent::GetPointIndexByName(const FString& Name) const
+int32 UTargetLockComponent::GetPointIndexByName(const FString& Name) const
 {
     constexpr int32 InvalidIndex = -1;
     if (!NearestTarget) return InvalidIndex;
@@ -508,7 +643,7 @@ int32 UTargetSystemComponent::GetPointIndexByName(const FString& Name) const
     return InvalidIndex;
 }
 
-void UTargetSystemComponent::SetupLocalPlayerController()
+void UTargetLockComponent::SetupLocalPlayerController()
 {
 	if (!IsValid(OwnerPawn))
 	{
@@ -519,7 +654,7 @@ void UTargetSystemComponent::SetupLocalPlayerController()
 	OwnerPlayerController = Cast<APlayerController>(OwnerPawn->GetController());
 }
 
-void UTargetSystemComponent::SortPotentialTargetsByDistance(TArray<TScriptInterface<ITargetSystemInterface>>& Array)
+void UTargetLockComponent::SortPotentialTargetsByDistance(TArray<TScriptInterface<ITargetSystemInterface>>& Array)
 {
     if (Array.IsEmpty()) return;
 
@@ -530,7 +665,7 @@ void UTargetSystemComponent::SortPotentialTargetsByDistance(TArray<TScriptInterf
     );
 }
 
-void UTargetSystemComponent::SortPotentialTargetsByAngle(TArray<TScriptInterface<ITargetSystemInterface>>& Array)
+void UTargetLockComponent::SortPotentialTargetsByAngle(TArray<TScriptInterface<ITargetSystemInterface>>& Array)
 {
     if (Array.IsEmpty()) return;
 
@@ -541,7 +676,7 @@ void UTargetSystemComponent::SortPotentialTargetsByAngle(TArray<TScriptInterface
     );
 }
 
-TScriptInterface<ITargetSystemInterface> UTargetSystemComponent::FindNearestTarget(bool bUseAngle)
+TScriptInterface<ITargetSystemInterface> UTargetLockComponent::FindNearestTarget(bool bUseAngle)
 {
     if (PotentialTargets.IsEmpty()) return nullptr;
     SortPotentialTargetsByDistance(PotentialTargets);
@@ -588,7 +723,7 @@ TScriptInterface<ITargetSystemInterface> UTargetSystemComponent::FindNearestTarg
     return PotentialTargets[BestTargetByDistance_Index];
 }
 
-bool UTargetSystemComponent::LineTrace(const FVector& Start, const FVector& End, FHitResult& Hit) const
+bool UTargetLockComponent::LineTrace(const FVector& Start, const FVector& End, FHitResult& Hit) const
 {
     FCollisionQueryParams Params;
     Params.AddIgnoredActor(GetOwner());
@@ -611,13 +746,13 @@ bool UTargetSystemComponent::LineTrace(const FVector& Start, const FVector& End,
     return Hit.HitObjectHandle.GetLocation() == End;
 }
 
-FRotator UTargetSystemComponent::GetControlRotationOnTarget(TargetInterface Interface) const
+FRotator UTargetLockComponent::GetControlRotationOnTarget(TargetInterface Interface) const
 {
     if (!Interface) return FRotator::ZeroRotator;
 
 	if (!IsValid(OwnerPlayerController))
 	{
-		TS_LOG(Warning, TEXT("UTargetSystemComponent::GetControlRotationOnTarget - OwnerPlayerController is not valid ..."))
+		TS_LOG(Warning, TEXT("UTargetLockComponent::GetControlRotationOnTarget - OwnerPlayerController is not valid ..."))
 		return FRotator::ZeroRotator;
 	}
 
@@ -633,11 +768,24 @@ FRotator UTargetSystemComponent::GetControlRotationOnTarget(TargetInterface Inte
 	if (bAdjustPitchBasedOnDistanceToTargetUsingCurve)
 	{
 		const float Distance = GetDistanceFromTarget(Interface);
-        const int32 Index = GetPointIndexByName(CurrentSocketOnNearestTarget);
-        const TArray<UTargetPointComponent*> TargetPoints = Interface->GetTargetPoints();
-	    const UCurveFloat* CurvePitch = TargetPoints.IsValidIndex(Index) && IsValid(TargetPoints[Index]->GetLockOnPitchOffsetCurve()) ?
-	            TargetPoints[Index]->GetLockOnPitchOffsetCurve():
-	            DefaultPitchOffsetCurve;
+
+	    // Subsystem path bakes the locked point into LockedPoint (via SelectTargetPoint);
+	    // the manual fallback resolves it by the FString socket index. Either way fall back
+	    // to the component-level DefaultPitchOffsetCurve.
+	    const UCurveFloat* CurvePitch = DefaultPitchOffsetCurve;
+	    if (LockedPoint && IsValid(LockedPoint->GetLockOnPitchOffsetCurve()))
+	    {
+	        CurvePitch = LockedPoint->GetLockOnPitchOffsetCurve();
+	    }
+	    else
+	    {
+	        const int32 Index = GetPointIndexByName(CurrentSocketOnNearestTarget);
+	        const TArray<UTargetPointComponent*> TargetPoints = Interface->GetTargetPoints();
+	        if (TargetPoints.IsValidIndex(Index) && IsValid(TargetPoints[Index]->GetLockOnPitchOffsetCurve()))
+	        {
+	            CurvePitch = TargetPoints[Index]->GetLockOnPitchOffsetCurve();
+	        }
+	    }
 
 		const float CurveValue = IsValid(CurvePitch) ? CurvePitch->GetFloatValue(Distance) : 0.f;
 		TargetRotation = FRotator(CurveValue, LookRotation.Yaw, ControlRotation.Roll);
@@ -659,20 +807,20 @@ FRotator UTargetSystemComponent::GetControlRotationOnTarget(TargetInterface Inte
 	return FMath::RInterpTo(ControlRotation, TargetRotation, GetWorld()->GetDeltaSeconds(), 9.0f);
 }
 
-AActor* UTargetSystemComponent::GetTargetOwnerActor(const TargetInterface& Interface) const
+AActor* UTargetLockComponent::GetTargetOwnerActor(const TargetInterface& Interface) const
 {
     if (!Interface) return nullptr;
     return Cast<AActor>(Interface.GetObject());
 }
 
-FVector UTargetSystemComponent::GetTargetOwnerLocation(const TargetInterface& Interface) const
+FVector UTargetLockComponent::GetTargetOwnerLocation(const TargetInterface& Interface) const
 {
     const AActor* TargetActor = GetTargetOwnerActor(Interface);
     if (!IsValid(TargetActor)) return FVector::Zero();
     return TargetActor->GetActorLocation();
 }
 
-void UTargetSystemComponent::SetControlRotationOnTarget() const
+void UTargetLockComponent::SetControlRotationOnTarget() const
 {
 	if (!IsValid(OwnerPlayerController)) return;
     if (!NearestTarget) return;
@@ -681,12 +829,12 @@ void UTargetSystemComponent::SetControlRotationOnTarget() const
     OwnerPlayerController->SetControlRotation(ControlRotation);
 }
 
-float UTargetSystemComponent::GetDistanceFromTarget(const TargetInterface& Interface) const
+float UTargetLockComponent::GetDistanceFromTarget(const TargetInterface& Interface) const
 {
 	return OwnerActor->GetDistanceTo(GetTargetOwnerActor(Interface));
 }
 
-void UTargetSystemComponent::ControlRotation(const bool ShouldControlRotation) const
+void UTargetLockComponent::ControlRotation(const bool ShouldControlRotation) const
 {
 	if (!IsValid(OwnerPawn))
 	{
@@ -705,7 +853,7 @@ void UTargetSystemComponent::ControlRotation(const bool ShouldControlRotation) c
     }
 }
 
-bool UTargetSystemComponent::IsInViewport(TargetInterface Interface) const
+bool UTargetLockComponent::IsInViewport(TargetInterface Interface) const
 {
 	if (!IsValid(OwnerPlayerController)) return true;
 

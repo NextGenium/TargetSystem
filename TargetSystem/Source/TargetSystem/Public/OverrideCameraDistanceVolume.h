@@ -9,7 +9,7 @@
 #include "OverrideCameraDistanceVolume.generated.h"
 
 class ITargetSystemOwnerInterface;
-class UTargetSystemComponent;
+class UTargetLockComponent;
 class ITargetSystemInterface;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
@@ -76,7 +76,7 @@ private:
     TScriptInterface<ITargetSystemOwnerInterface> PlayerInterface;
 
     UPROPERTY()
-    UTargetSystemComponent* TargetSystemComponent = nullptr;
+    UTargetLockComponent* TargetSystemComponent = nullptr;
 
     FVector CurrentSpringArmSocketOffset = FVector::Zero();
     FTimeline CameraDistanceTimeline;

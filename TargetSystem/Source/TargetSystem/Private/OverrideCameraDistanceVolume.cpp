@@ -2,7 +2,7 @@
 
 #include "OverrideCameraDistanceVolume.h"
 
-#include "TargetSystemComponent.h"
+#include "TargetLockComponent.h"
 #include "TargetSystemInterface.h"
 #include "TargetSystemOwnerInterface.h"
 #include "Components/BoxComponent.h"
