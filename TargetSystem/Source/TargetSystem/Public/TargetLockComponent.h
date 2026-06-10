@@ -80,6 +80,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Target System")
     void ControlRotation(bool ShouldControlRotation) const;
 
+    UFUNCTION(BlueprintCallable, Category = "Target System")
     virtual void SwitchTarget(FVector2D AxisValue);
 
 protected:
@@ -87,15 +88,8 @@ protected:
 
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-    // Base params
-    UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Target System")
-    TSubclassOf<AActor> RequiredClass;
-
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     ECharacterRotationMode CharacterRotationMode = ECharacterRotationMode::OrientToMovement;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
-	bool bIgnoreViewport = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     bool bAutoTargetSwitch = false;
@@ -109,38 +103,19 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     float BreakLineOfSightDelay = 2.0f;
 
-    // Target Subsystem (GameplayTargetingSystem). When true, selection/switch run through
-    // TargetingPreset; when false, the manual Souls-like search below is used as a fallback.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Target Subsystem",
-        meta = (InlineEditConditionToggle))
-    bool bUseTargetSubsystem = true;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Target Subsystem",
-        meta = (EditCondition = "bUseTargetSubsystem"))
+    // Targeting preset (GameplayTargetingSystem) — single source of truth for target selection
+    // and switching. SortByLockOn / FilterSwitchTargetSide branch on the request Mode.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Target Subsystem")
     TObjectPtr<UTargetingPreset> TargetingPreset = nullptr;
 
     // Optimization
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Optimization")
     float TimerTick = 0.5f;
 
-    // Distance Settings
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Distance Settings")
-    float DangerousDistanceToTarget = 200.0f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Distance Settings")
-	float MaximumDistanceCanStartTarget = 3000.0f;
-
+    // Distance Settings — LoseTargetDistance drives the post-lock watchdog (drop the target once
+    // it goes beyond this range). Acquisition range is governed by the preset's filter tasks.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Distance Settings")
     float LoseTargetDistance = 4000.0f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Distance Settings")
-    float MaximumDistanceToPotentialTargets = 2400.0f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Distance Settings")
-    float MaximumFindAngle = 50.0f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Distance Settings")
-    float ExtraDistanceToLimitWhenSearchingByAngle = 300.0f;
 
     // Widget
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Widget")
@@ -148,9 +123,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Widget")
 	float LockedOnWidgetDrawSize = 32.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Widget")
-	FString CurrentSocketOnNearestTarget = FString("spine_03");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Widget")
 	FVector LockedOnWidgetRelativeLocation = FVector(0.0f, 0.0f, 0.0f);
@@ -188,8 +160,8 @@ protected:
 	UPROPERTY()
 	TArray<TScriptInterface<ITargetSystemInterface>> PotentialTargets;
 
-	// Lock-on point backing the active target, when a SelectTargetPoint task baked one into
-	// the result. Drives the per-point pitch curve; null with the single lock-on preset.
+	// Lock-on point backing the active target (the target's first target point). Drives the
+	// per-point pitch curve and the reticle widget attach; null if the target has no points.
 	UPROPERTY()
 	TObjectPtr<UTargetPointComponent> LockedPoint = nullptr;
 
@@ -226,14 +198,7 @@ private:
     FTimerHandle ObservingTimer;
     FTimerHandle BehindWallTimer;
 
-    bool CanTargetLock() const;
-    bool IsInViewport(TargetInterface TargetActor) const;
-    bool ObjectIsTargetable(const TargetInterface Interface) const;
-
-    int32 GetPointIndexByName(const FString& Name) const;
     float GetDistanceFromTarget(const TargetInterface& Interface) const;
-    float GetAngleUsingCameraRotation(const FVector& Location) const;
-    float GetAngleUsingCharacterRotation(const FVector& Location) const;
     FRotator GetControlRotationOnTarget(TargetInterface Interface) const;
     AActor* GetTargetOwnerActor(const TargetInterface& Interface) const;
     FVector GetTargetOwnerLocation(const TargetInterface& Interface) const;
@@ -241,24 +206,13 @@ private:
     void SetControlRotationOnTarget() const;
     void SetupLocalPlayerController();
 
-    // Pulls valid actors out of a finished targeting request; first valid is returned,
-    // all valid are appended to OutTargets, and LockedPoint is set from the first result.
+    // Pulls valid actors out of a finished targeting request; first valid is returned and
+    // all valid are appended to OutTargets.
     AActor* ExtractTargetingResults(FTargetingRequestHandle Handle, TArray<TargetInterface>& OutTargets);
 
-    void AddPotentialTargetsByInterface(const TSubclassOf<AActor>& ActorClass);
     bool LineTrace(const FVector& Start, const FVector& End, FHitResult& Hit) const;
 	void CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface);
 
-    
     void UpdateTargetInfo();
-    bool TrySwitchBetweenTargetPoints(FVector2D AxisValue);
     void StopTargetLock();
-
-    void SortPotentialTargetsByDistance(TArray<TScriptInterface<ITargetSystemInterface>>& Array);
-    void SortPotentialTargetsByAngle(TArray<TScriptInterface<ITargetSystemInterface>>& Array);
-
-    TargetInterface FindNearestTarget(bool bUseAngle = false);
-    TargetInterface FindByHorizontal(TArray<TargetInterface> LookTargets, float AxisValue) const;
-    TargetInterface FindByVertical(TArray<TargetInterface> LookTargets, FVector2D AxisValue) const;
-    static FRotator FindLookAtRotation(const FVector Start, const FVector Target);
 };
