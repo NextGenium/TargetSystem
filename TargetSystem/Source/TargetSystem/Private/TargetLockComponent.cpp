@@ -265,22 +265,16 @@ void UTargetLockComponent::SwitchTarget(FVector2D AxisValue)
 {
     if (!bTargetLocked) return;
 
-    // Edge-trigger: re-arm once the input returns toward centre, so one flick = one switch
-    // (fixes the continuous mouse-move re-trigger / "skips around" feel).
-    const float Mag = FMath::Abs(AxisValue.X);
-    if (Mag < SwitchReleaseThreshold)
-    {
-        bSwitchArmed = true;
-        return;
-    }
-    if (!bSwitchArmed || Mag < SwitchActivateThreshold) return;
+    // Switch is driven by discrete one-shot input (GA_TargetLock_Select* sends a ±999 axis,
+    // not a per-tick analog value), so a simple magnitude gate is correct here. Re-fire spam
+    // is already debounced by bIsSwitchingTarget (0.25–0.5s cooldown via ResetIsSwitchingTarget).
+    if (FMath::Abs(AxisValue.X) < SwitchActivateThreshold) return;
     if (bIsSwitchingTarget) return;
     if (!IsValid(TargetingPreset))
     {
         TS_LOG(Warning, TEXT("[%s] TargetLockComponent: TargetingPreset is not assigned — target switch cannot run."), *GetName());
         return;
     }
-    bSwitchArmed = false;
 
     UWorld* World = GetWorld();
     UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
