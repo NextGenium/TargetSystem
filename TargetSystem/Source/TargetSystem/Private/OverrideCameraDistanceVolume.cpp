@@ -4,7 +4,6 @@
 
 #include "TargetLockComponent.h"
 #include "TargetSystemInterface.h"
-#include "TargetSystemOwnerInterface.h"
 #include "Components/BoxComponent.h"
 #include "Components/TimelineComponent.h"
 
@@ -80,12 +79,11 @@ void AOverrideCameraDistanceVolume::ActivateVolume()
     InteractionVolume->GetOverlappingActors(OverlappingActors);
     for (AActor* OverlappingActor : OverlappingActors)
     {
-        if (!OverlappingActor->Implements<UTargetSystemOwnerInterface>()) continue;
+        if (!IsValid(OverlappingActor) || !OverlappingActor->Implements<UTargetSystemInterface>()) continue;
+        // The owner (player) is the actor that exposes a TargetLockComponent; enemies return null.
+        if (!ITargetSystemInterface::Execute_GetTargetSystemComponent(OverlappingActor)) continue;
 
-        const auto OwnerInterface = StaticCast<TScriptInterface<ITargetSystemOwnerInterface>>(OverlappingActor);
-        if (!OwnerInterface) return;
-
-        PlayerInterface = OwnerInterface;
+        PlayerInterface = StaticCast<TScriptInterface<ITargetSystemInterface>>(OverlappingActor);
         StartLogic();
 
         if (OnTriggerActivated.IsBound())
@@ -102,7 +100,7 @@ void AOverrideCameraDistanceVolume::DeactivateVolume()
 
     bIsActivate = false;
     CameraDistanceTimeline.Reverse();
-    if (UTargetLockComponent* TargetComp = ITargetSystemOwnerInterface::Execute_GetTargetSystemComponent(PlayerInterface.GetObject()))
+    if (UTargetLockComponent* TargetComp = ITargetSystemInterface::Execute_GetTargetSystemComponent(PlayerInterface.GetObject()))
     {
         TargetComp->OnTargetIsDead.Remove(this, "ChangeTargetsInVolume");
     }
@@ -117,11 +115,10 @@ void AOverrideCameraDistanceVolume::DeactivateVolume()
 void AOverrideCameraDistanceVolume::OnInteractionVolumeOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
     if (TargetsInVolume.IsEmpty()) return;
+    if (!IsValid(OtherActor) || !OtherActor->Implements<UTargetSystemInterface>()) return;
+    if (!ITargetSystemInterface::Execute_GetTargetSystemComponent(OtherActor)) return;
 
-    const auto OwnerInterface = StaticCast<TScriptInterface<ITargetSystemOwnerInterface>>(OtherActor);
-    if (!OwnerInterface) return;
-
-    PlayerInterface = OwnerInterface;
+    PlayerInterface = StaticCast<TScriptInterface<ITargetSystemInterface>>(OtherActor);
     StartLogic();
 
     if (OnTriggerActivated.IsBound())
@@ -133,13 +130,12 @@ void AOverrideCameraDistanceVolume::OnInteractionVolumeOverlapBegin(UPrimitiveCo
 void AOverrideCameraDistanceVolume::OnInteractionVolumeOverlapEnd(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
     if (!bIsActivate) return;
-
-    const auto OwnerInterface = StaticCast<TScriptInterface<ITargetSystemOwnerInterface>>(OtherActor);
-    if (!OwnerInterface) return;
+    if (!IsValid(OtherActor) || !OtherActor->Implements<UTargetSystemInterface>()) return;
+    if (!ITargetSystemInterface::Execute_GetTargetSystemComponent(OtherActor)) return;
 
     bIsActivate = false;
     CameraDistanceTimeline.Reverse();
-    if (UTargetLockComponent* TargetComp = ITargetSystemOwnerInterface::Execute_GetTargetSystemComponent(PlayerInterface.GetObject()))
+    if (UTargetLockComponent* TargetComp = ITargetSystemInterface::Execute_GetTargetSystemComponent(PlayerInterface.GetObject()))
     {
         TargetComp->OnTargetIsDead.Remove(this, "ChangeTargetsInVolume");
     }
@@ -149,7 +145,7 @@ void AOverrideCameraDistanceVolume:: StartLogic()
 {
     bIsActivate = true;
 
-    if (UTargetLockComponent* TargetComp = ITargetSystemOwnerInterface::Execute_GetTargetSystemComponent(PlayerInterface.GetObject()))
+    if (UTargetLockComponent* TargetComp = ITargetSystemInterface::Execute_GetTargetSystemComponent(PlayerInterface.GetObject()))
     {
         TargetComp->OnTargetIsDead.AddDynamic(this, &AOverrideCameraDistanceVolume::ChangeTargetsInVolume);
     }

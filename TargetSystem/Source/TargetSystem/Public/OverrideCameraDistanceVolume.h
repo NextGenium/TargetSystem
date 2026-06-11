@@ -8,7 +8,6 @@
 #include "Components/BillboardComponent.h"
 #include "OverrideCameraDistanceVolume.generated.h"
 
-class ITargetSystemOwnerInterface;
 class UTargetLockComponent;
 class ITargetSystemInterface;
 
@@ -73,7 +72,7 @@ private:
     TArray<TScriptInterface<ITargetSystemInterface>> TargetsInVolume {};
 
     UPROPERTY()
-    TScriptInterface<ITargetSystemOwnerInterface> PlayerInterface;
+    TScriptInterface<ITargetSystemInterface> PlayerInterface;
 
     UPROPERTY()
     UTargetLockComponent* TargetSystemComponent = nullptr;

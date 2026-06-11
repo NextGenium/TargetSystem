@@ -7,6 +7,7 @@
 #include "TargetSystemInterface.generated.h"
 
 class UTargetPointComponent;
+class UTargetLockComponent;
 struct FTargetPointQuery;
 
 UINTERFACE(Blueprintable)
@@ -34,6 +35,17 @@ public:
     // Lifecycle hooks for project UI / VFX / AI-reaction.
     virtual void OnTargetLockBegin(AActor* LockOwner) {}
     virtual void OnTargetLockEnd(AActor* LockOwner) {}
+
+    // Owner-side (player) hooks, merged from the former ITargetSystemOwnerInterface (R3/L5).
+    // The owner is the actor that exposes a TargetLockComponent — enemies return null.
+    // Project actors override GetTargetSystemComponent_Implementation and call via
+    // Execute_GetTargetSystemComponent.
+    UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Target System")
+    UTargetLockComponent* GetTargetSystemComponent() const;
+    virtual UTargetLockComponent* GetTargetSystemComponent_Implementation() const { return nullptr; }
+
+    virtual FVector GetCameraLocation() const { return {}; }
+    virtual void ChangeCameraLocation(const FVector& Location) {}
 
     // DEPRECATED: lock-state hooks on the target. Removed when the component
     // refactor lands (Step 8) and the lifecycle moves to OnTargetLockBegin/End.
