@@ -65,7 +65,7 @@ void UTargetLockComponent::TickComponent(const float DeltaTime, const ELevelTick
 void UTargetLockComponent::StartObservingTarget()
 {
     bTargetLocked = true;
-    NearestTarget->StartTargetable();
+    NearestTarget->OnTargetLockBegin(GetOwner());
 
     // Lock onto the target's first target point — drives the reticle widget attach and the
     // per-point pitch curve. Point-selection via the preset is a later follow-up.
@@ -117,7 +117,7 @@ void UTargetLockComponent::StopObservingTarget(const bool bIgnoreAutoSwitch, con
             OnTargetLockedOff.Broadcast(GetTargetOwnerActor(NearestTarget));
         }
 
-        NearestTarget->StopTargetable();
+        NearestTarget->OnTargetLockEnd(GetOwner());
         if (bTargetIsDead)
         {
             PotentialTargets.Remove(NearestTarget);

@@ -46,9 +46,4 @@ public:
 
     virtual FVector GetCameraLocation() const { return {}; }
     virtual void ChangeCameraLocation(const FVector& Location) {}
-
-    // DEPRECATED: lock-state hooks on the target. Removed when the component
-    // refactor lands (Step 8) and the lifecycle moves to OnTargetLockBegin/End.
-    virtual void StartTargetable() {}
-    virtual void StopTargetable() {}
 };
