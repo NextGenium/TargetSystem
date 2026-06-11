@@ -99,6 +99,8 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     float SwitchActivateThreshold = 0.5f;
 
+    // Occlusion channel for the lose-target LOS watchdog (defaults to ECC_Visibility). Set this
+    // to whatever channel your walls block; existing BP components may have a stale ECC_Pawn.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     TEnumAsByte<ECollisionChannel> TargetCollisionChannel;
 
@@ -211,7 +213,9 @@ private:
     // all valid are appended to OutTargets.
     AActor* ExtractTargetingResults(FTargetingRequestHandle Handle, TArray<TargetInterface>& OutTargets);
 
-    bool LineTrace(const FVector& Start, const FVector& End, FHitResult& Hit) const;
+    // Occlusion LOS check for the watchdog: true == clear line of sight to TargetActor (which
+    // is ignored, alongside the owner), false == something blocks TargetCollisionChannel.
+    bool LineTrace(const FVector& Start, const FVector& End, const AActor* TargetActor, FHitResult& Hit) const;
 	void CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface);
 
     void UpdateTargetInfo();

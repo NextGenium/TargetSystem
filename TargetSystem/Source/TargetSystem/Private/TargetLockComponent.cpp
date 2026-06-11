@@ -21,7 +21,10 @@ UTargetLockComponent::UTargetLockComponent()
 
     // LockedOnWidgetClass is assigned project-side via the EditAnywhere UPROPERTY.
     // The plugin ships no Content, so no default widget is loaded here.
-    TargetCollisionChannel = ECC_Pawn;
+
+    // Occlusion channel for the lose-target LOS watchdog (UpdateTargetInfo). Visibility is the
+    // conventional channel for "is a wall between me and the target"; Pawn would miss world geo.
+    TargetCollisionChannel = ECC_Visibility;
 }
 
 void UTargetLockComponent::SetUp(
@@ -93,7 +96,7 @@ void UTargetLockComponent::StartObservingTarget()
 void UTargetLockComponent::UpdateTargetInfo()
 {
     FHitResult Hit;
-    if(NearestTarget->IsTargetable() && !LineTrace(GetOwner()->GetActorLocation(), GetTargetOwnerLocation(NearestTarget), Hit))
+    if(NearestTarget->IsTargetable() && !LineTrace(GetOwner()->GetActorLocation(), GetTargetOwnerLocation(NearestTarget), GetTargetOwnerActor(NearestTarget), Hit))
     {
         if (BehindWallTimer.IsValid()) return;
         GetWorld()->GetTimerManager().SetTimer(BehindWallTimer, [this]() { StopObservingTarget(true); }, BreakLineOfSightDelay, false);
@@ -335,11 +338,28 @@ void UTargetLockComponent::CreateAndAttachTargetLockedOnWidgetComponent(const Ta
     if (!IsValid(TargetActor)) return;
 
     const TArray<UTargetPointComponent*> TargetPoints = Interface->GetTargetPoints();
-    if (TargetPoints.IsEmpty()) return;
 
-    // The reticle attaches to the locked point (the target's first point), seeded in
-    // StartObservingTarget; fall back to the first available point.
-    USceneComponent* AttachPoint = LockedPoint ? LockedPoint.Get() : TargetPoints[0];
+    // R8: target points are optional — lock-on works without them. Prefer the locked point,
+    // then the first point; if the target has none, attach the reticle to its mesh (or root)
+    // so the widget still shows at the actor location instead of silently disappearing.
+    USceneComponent* AttachPoint = nullptr;
+    if (LockedPoint)
+    {
+        AttachPoint = LockedPoint.Get();
+    }
+    else if (!TargetPoints.IsEmpty())
+    {
+        AttachPoint = TargetPoints[0];
+    }
+    else if (UMeshComponent* Mesh = TargetActor->FindComponentByClass<UMeshComponent>())
+    {
+        AttachPoint = Mesh;
+    }
+    else
+    {
+        AttachPoint = TargetActor->GetRootComponent();
+    }
+    if (!IsValid(AttachPoint)) return;
 
 	if (!LockedOnWidgetClass)
 	{
@@ -349,9 +369,6 @@ void UTargetLockComponent::CreateAndAttachTargetLockedOnWidgetComponent(const Ta
 
 	TargetLockedOnWidgetComponent = NewObject<UWidgetComponent>(TargetActor, MakeUniqueObjectName(TargetActor, UWidgetComponent::StaticClass(), FName("TargetLockOn")));
 	TargetLockedOnWidgetComponent->SetWidgetClass(LockedOnWidgetClass);
-
-	UMeshComponent* MeshComponent = TargetActor->FindComponentByClass<UMeshComponent>();
-	USceneComponent* ParentComponent = MeshComponent ? MeshComponent : TargetActor->GetRootComponent();
 
 	if (IsValid(OwnerPlayerController))
 	{
@@ -378,7 +395,7 @@ void UTargetLockComponent::SetupLocalPlayerController()
 	OwnerPlayerController = Cast<APlayerController>(OwnerPawn->GetController());
 }
 
-bool UTargetLockComponent::LineTrace(const FVector& Start, const FVector& End, FHitResult& Hit) const
+bool UTargetLockComponent::LineTrace(const FVector& Start, const FVector& End, const AActor* TargetActor, FHitResult& Hit) const
 {
     FCollisionQueryParams Params;
     Params.AddIgnoredActor(GetOwner());
@@ -390,7 +407,15 @@ bool UTargetLockComponent::LineTrace(const FVector& Start, const FVector& End, F
         IgnoredActors.Add(ChildActor);
     }
     Params.AddIgnoredActors(IgnoredActors);
-    GetWorld()->LineTraceSingleByChannel(
+
+    // Ignore the target itself: pure occlusion check — only blockers BETWEEN owner and target
+    // matter. A trace reaching the (ignored) target with no blocking hit == clear line of sight.
+    if (IsValid(TargetActor))
+    {
+        Params.AddIgnoredActor(TargetActor);
+    }
+
+    const bool bBlockingHit = GetWorld()->LineTraceSingleByChannel(
         Hit,
         Start,
         End,
@@ -398,7 +423,7 @@ bool UTargetLockComponent::LineTrace(const FVector& Start, const FVector& End, F
         Params
     );
 
-    return Hit.HitObjectHandle.GetLocation() == End;
+    return !bBlockingHit;
 }
 
 FRotator UTargetLockComponent::GetControlRotationOnTarget(TargetInterface Interface) const
