@@ -52,13 +52,25 @@ bool UTargetingTask_FilterSwitchTargetSide::ShouldFilterTarget(
 		return false;
 	}
 
-	const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(PC);
+	// Side is measured relative to the CURRENT target's screen position, not the screen
+	// centre — "switch right" means the neighbour to the right of who you are locked on.
 	const float InputDirection = TargetLockContext->Mode == ETargetSwitchMode::SwitchLeft ? -1.f : +1.f;
+
+	FVector2D ReferenceScreen;
+	if (IsValid(TargetLockContext->CurrentTarget))
+	{
+		PC->ProjectWorldLocationToScreen(TargetLockContext->CurrentTarget->GetActorLocation(), ReferenceScreen);
+	}
+	else
+	{
+		ReferenceScreen = UWidgetLayoutLibrary::GetViewportSize(PC) * 0.5f;
+	}
 
 	FVector2D ScreenPos;
 	PC->ProjectWorldLocationToScreen(TargetActor->GetActorLocation(), ScreenPos);
 
-	const float DeltaX = ScreenPos.X - (ViewportSize.X * 0.5f);
+	const float DeltaX = ScreenPos.X - ReferenceScreen.X;
 
-	return DeltaX * InputDirection < 0;
+	// Remove anything on the wrong side (and anything column-aligned with the current target).
+	return DeltaX * InputDirection <= 0.f;
 }

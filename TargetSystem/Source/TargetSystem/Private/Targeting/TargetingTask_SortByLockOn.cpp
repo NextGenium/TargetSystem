@@ -62,20 +62,28 @@ float UTargetingTask_SortByLockOn::ComputeSwitchScore(
 	if (TargetLockContext->CurrentTarget == TargetActor)
 		return FLT_MAX;
 
-	const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(PC);
-	FVector2D Center = ViewportSize * 0.5f;
-	const float InputDirection = TargetLockContext->Mode == ETargetSwitchMode::SwitchLeft ? -1.f : +1.f;
-	Center.X += InputDirection * (ScreenOffsetScale * 0.5f);
+	// Rank the surviving (correct-side) candidates by how close they sit on screen to the
+	// CURRENT target — the adjacent neighbour wins — with a minor world-distance tiebreak.
+	FVector2D ReferenceScreen;
+	if (IsValid(TargetLockContext->CurrentTarget))
+	{
+		PC->ProjectWorldLocationToScreen(TargetLockContext->CurrentTarget->GetActorLocation(), ReferenceScreen);
+	}
+	else
+	{
+		ReferenceScreen = UWidgetLayoutLibrary::GetViewportSize(PC) * 0.5f;
+	}
 
 	FVector2D ScreenPos;
 	PC->ProjectWorldLocationToScreen(TargetActor->GetActorLocation(), ScreenPos);
-	float ScreenDelta = FMath::Abs(ScreenPos.X - Center.X);
+
+	float ScreenGap = FVector2D::Distance(ScreenPos, ReferenceScreen);
 	if (ScreenOffsetScale > 0)
-		ScreenDelta /= ScreenOffsetScale;
+		ScreenGap /= ScreenOffsetScale;
 
 	float Dist = FVector::Distance(PlayerPawn->GetActorLocation(), TargetActor->GetActorLocation());
 	if (DistanceScale > 0)
 		Dist /= DistanceScale;
 
-	return ScreenDelta * ScreenWeight + Dist * DistanceWeight;
+	return ScreenGap * ScreenWeight + Dist * DistanceWeight;
 }

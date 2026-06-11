@@ -94,8 +94,13 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     bool bAutoTargetSwitch = false;
 
+    // Target-switch input is edge-triggered (one switch per flick): the horizontal axis must
+    // cross SwitchActivateThreshold to switch, then fall below SwitchReleaseThreshold to re-arm.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
-    float StartRotatingThreshold = 0.85f;
+    float SwitchActivateThreshold = 0.5f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
+    float SwitchReleaseThreshold = 0.2f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     TEnumAsByte<ECollisionChannel> TargetCollisionChannel;
@@ -167,11 +172,13 @@ protected:
 
 	bool bIsSwitchingTarget = false;
 
+	// Edge-trigger latch: true once the switch input has returned toward centre.
+	bool bSwitchArmed = true;
+
 protected:
 	void StartObservingTarget();
 	void MessageFinishTargetLock() const;
 	virtual void AutoSwitchTarget();
-	bool CanSwitchTarget(const FVector2D& AxisValue) const;
 	void ResetIsSwitchingTarget();
 
 	// Subsystem path: async lock-on result + sync target-switch result callbacks.

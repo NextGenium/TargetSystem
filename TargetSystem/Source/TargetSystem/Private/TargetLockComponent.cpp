@@ -263,13 +263,24 @@ void UTargetLockComponent::StopTargetLock()
 
 void UTargetLockComponent::SwitchTarget(FVector2D AxisValue)
 {
-    if (!CanSwitchTarget(AxisValue)) return;
+    if (!bTargetLocked) return;
+
+    // Edge-trigger: re-arm once the input returns toward centre, so one flick = one switch
+    // (fixes the continuous mouse-move re-trigger / "skips around" feel).
+    const float Mag = FMath::Abs(AxisValue.X);
+    if (Mag < SwitchReleaseThreshold)
+    {
+        bSwitchArmed = true;
+        return;
+    }
+    if (!bSwitchArmed || Mag < SwitchActivateThreshold) return;
     if (bIsSwitchingTarget) return;
     if (!IsValid(TargetingPreset))
     {
         TS_LOG(Warning, TEXT("[%s] TargetLockComponent: TargetingPreset is not assigned — target switch cannot run."), *GetName());
         return;
     }
+    bSwitchArmed = false;
 
     UWorld* World = GetWorld();
     UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
@@ -322,11 +333,6 @@ void UTargetLockComponent::ResetIsSwitchingTarget()
 
     GetWorld()->GetTimerManager().ClearTimer(SwitchingTargetTimerHandle);
 	bIsSwitchingTarget = false;
-}
-
-bool UTargetLockComponent::CanSwitchTarget(const FVector2D& AxisValue) const
-{
-	return FMath::Abs(AxisValue.X) >= StartRotatingThreshold || FMath::Abs(AxisValue.Y) >= StartRotatingThreshold;
 }
 
 void UTargetLockComponent::CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface)
