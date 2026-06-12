@@ -103,12 +103,15 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Target System")
     void ControlRotation(bool ShouldControlRotation) const;
 
+    // Enemy switch: step the lock to the adjacent target on the left/right (AxisValue.X sign).
+    // Core lives in ExecuteTargetSwitch, reused by SwitchTargetPoint for cross-target overflow.
     UFUNCTION(BlueprintCallable, Category = "Target System")
     virtual void SwitchTarget(FVector2D AxisValue);
 
-    // Switch the lock-on point on the CURRENT target (head/body/tail). Runs SwitchPointPreset
-    // (SelectTargetPoint) in SwitchPoint mode, which steps the locked point along the screen-X-sorted
-    // eligible points in the input direction (AxisValue.X < 0 => left). Clamps at the ends; no wrap.
+    // Unified point scroll: step the lock between the CURRENT target's points (screen-X order, in
+    // the AxisValue.X direction). At a target edge it overflows onto the adjacent enemy (via
+    // ExecuteTargetSwitch) and lands on that target's entry-edge point. Clamps at the global ends;
+    // no wrap. Distinct input from SwitchTarget — bind it to its own action (e.g. scroll).
     UFUNCTION(BlueprintCallable, Category = "Target System")
     virtual void SwitchTargetPoint(FVector2D AxisValue);
 
@@ -279,6 +282,15 @@ private:
     void CaptureDebugCandidates(FTargetingRequestHandle Handle, TArray<FTargetLockDebugCandidate>& Out) const;
 #endif
 
+    // Enemy-switch core (Mode = SwitchLeft/Right). Returns true if the locked target changed.
+    // Shared by SwitchTarget and the SwitchTargetPoint cross-target overflow.
+    bool ExecuteTargetSwitch(int32 Direction);
+
+    // Run SwitchPointPreset (SelectTargetPoint) synchronously against TargetActor, stepping from
+    // StartPoint in Direction. StartPoint == null => land on the entry-edge point. Returns the
+    // chosen point (== StartPoint means we are at the target edge — the boundary contract).
+    UTargetPointComponent* RunSwitchPointRequest(AActor* TargetActor, UTargetPointComponent* StartPoint, int32 Direction);
+
     float GetDistanceFromTarget(const TargetInterface& Interface) const;
     FRotator GetControlRotationOnTarget(TargetInterface Interface) const;
     AActor* GetTargetOwnerActor(const TargetInterface& Interface) const;
@@ -287,6 +299,11 @@ private:
     // Control-rotation focus: the locked point's world location when a point is locked on the
     // current target, else the actor origin. Lets lock-on aim at head/body/tail.
     FVector GetLockedFocusLocation(const TargetInterface& Interface) const;
+
+    // Pick the lock-on point the player is aiming at: smallest camera angle wins, distance only
+    // breaks ties (mirrors SortByLockOn's angle+distance scoring, over a target's points). Used at
+    // lock time so the reticle/focus land on the looked-at point instead of GetTargetPoints()[0].
+    UTargetPointComponent* SelectBestLockOnPoint(const TArray<UTargetPointComponent*>& Points) const;
 
     void SetControlRotationOnTarget() const;
     void SetupLocalPlayerController();

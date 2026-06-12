@@ -11,6 +11,7 @@
 #include "TargetPointComponent.h"
 #include "TargetLockComponent.h"
 #include "TargetSystemInterface.h"
+#include "TargetSystemDebugDraw.h"
 #include "Targeting/TargetLockContext.h"
 
 namespace
@@ -48,6 +49,14 @@ void FGameplayDebuggerCategory_TargetSystem::CollectData(APlayerController* Owne
 		AddTextLine(FString::Printf(TEXT("{red}'%s' has no UTargetLockComponent"), *GetNameSafe(PlayerPawn)));
 		return;
 	}
+
+#if ENABLE_DRAW_DEBUG
+	// Reuse the cvar overlay's foreground (x-ray) draw so simply opening the debugger (apostrophe)
+	// reproduces the through-mesh trace + point markers + labels with NO console command. The category's
+	// own AddShape markers are SDPG_World (occluded by the mesh) — only their Description text reads
+	// through. Level 3 = trace + anchor + points with name/point-tag + blocker-tag labels.
+	TargetSystemDebugDraw::DrawOverlay(Component, 3);
+#endif
 
 	// Camera basis for the raw angle/distance readout shared by both candidate sections.
 	FVector ViewLocation = PlayerPawn->GetActorLocation();
@@ -118,13 +127,17 @@ void FGameplayDebuggerCategory_TargetSystem::CollectData(APlayerController* Owne
 		return;
 	}
 
+	// Anchor the trace at the actual locked POINT we are attached to, not the actor origin.
+	const UTargetPointComponent* ActivePoint = Component->GetLockedPoint();
+	const FVector AnchorLocation = IsValid(ActivePoint) ? ActivePoint->GetComponentLocation() : Target->GetActorLocation();
+
 	const float TargetDistance = FVector::Dist(PawnLocation, Target->GetActorLocation());
 	AddTextLine(FString::Printf(TEXT("{white}Target: {yellow}%s  {white}dist {yellow}%.0f {white}/ lose {grey}%.0f"),
 		*GetNameSafe(Target), TargetDistance, Component->GetLoseTargetDistance()));
 
-	// 3D line player -> target + marker on the target.
-	AddShape(FGameplayDebuggerShape::MakeSegment(PawnLocation, Target->GetActorLocation(), 2.0f, FColor::Yellow));
-	AddShape(FGameplayDebuggerShape::MakePoint(Target->GetActorLocation(), 12.0f, FColor::Yellow));
+	// 3D line player -> locked point + marker on the anchor.
+	AddShape(FGameplayDebuggerShape::MakeSegment(PawnLocation, AnchorLocation, 2.0f, FColor::Yellow));
+	AddShape(FGameplayDebuggerShape::MakePoint(AnchorLocation, 12.0f, FColor::Yellow));
 
 	const ITargetSystemInterface* Interface = Cast<ITargetSystemInterface>(Target);
 	if (!Interface)
@@ -133,7 +146,6 @@ void FGameplayDebuggerCategory_TargetSystem::CollectData(APlayerController* Owne
 		return;
 	}
 
-	const UTargetPointComponent* ActivePoint = Component->GetLockedPoint();
 	const TArray<UTargetPointComponent*> Points = Interface->GetTargetPoints();
 	AddTextLine(FString::Printf(TEXT("{white}Points: {yellow}%d"), Points.Num()));
 
@@ -144,13 +156,24 @@ void FGameplayDebuggerCategory_TargetSystem::CollectData(APlayerController* Owne
 			continue;
 		}
 
-		// Cyan = the active locked point; red = has StateTags (e.g. Block.Stunned); green = free.
+		// Green = lockable point; red = has StateTags (e.g. Block.Stunned). The active point shares the
+		// green but is drawn larger — the yellow trace marks which one we are anchored to.
 		const bool bActive = (Point == ActivePoint);
 		const bool bBlocked = !Point->StateTags.IsEmpty();
-		const FColor Color = bActive ? FColor::Cyan : (bBlocked ? FColor::Red : FColor::Green);
-		AddShape(FGameplayDebuggerShape::MakePoint(Point->GetComponentLocation(), bActive ? 12.0f : 8.0f, Color));
+		const FColor Color = bBlocked ? FColor::Red : FColor::Green;
 
-		const FString PointTagsStr = Point->PointTags.IsEmpty() ? TEXT("(no tags)") : Point->PointTags.ToStringSimple();
+		// World marker + label right at the point. Gameplay-debugger shapes draw on the canvas
+		// (screen-projected), so both the marker and its Description text read THROUGH the target
+		// mesh — no cvar needed, this shows the moment the category is enabled. Label mirrors the
+		// MotionWarping point visualizer: "Name [point tags]".
+		const FString PointTagsStr = Point->PointTags.IsEmpty() ? TEXT("(no point tags)") : Point->PointTags.ToStringSimple();
+		FString PointLabel = FString::Printf(TEXT("%s [%s]"), *Point->GetName(), *PointTagsStr);
+		if (bActive)
+		{
+			PointLabel += TEXT(" [active]");
+		}
+		AddShape(FGameplayDebuggerShape::MakePoint(Point->GetComponentLocation(), bActive ? 16.0f : 12.0f, Color, PointLabel));
+
 		const FString ActiveStr = bActive ? TEXT(" {cyan}[active]") : TEXT("");
 		const FString StateStr = Point->StateTags.IsEmpty()
 			? FString()

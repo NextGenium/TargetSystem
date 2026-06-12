@@ -42,6 +42,13 @@ void UTargetingTask_CollectTargetables::SelectTargets_Implementation(
 			continue;
 		}
 
+		// Lock-on requires a lockable point: actors with no UTargetPointComponent never enter the
+		// candidate set, so neither the initial lock nor a cross-target switch can pick them.
+		if (bRequireTargetPoint && Interface->GetTargetPoints().Num() == 0)
+		{
+			continue;
+		}
+
 		if (SearchRadius > 0.f && FVector::DistSquared(SourceLocation, Actor->GetActorLocation()) > RadiusSq)
 		{
 			continue;

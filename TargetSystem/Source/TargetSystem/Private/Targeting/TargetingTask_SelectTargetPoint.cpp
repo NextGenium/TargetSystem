@@ -150,9 +150,10 @@ void UTargetingTask_SelectTargetPoint::ExecuteSwitchPoint(
 
 	// Candidates: eligible points on the current target (skips blocked/inactive via MatchesQuery).
 	TArray<UTargetPointComponent*> Candidates = GatherEligiblePoints(Interface, PointQuery);
-	if (Candidates.Num() < 2)
+	if (Candidates.IsEmpty())
 	{
-		// Degenerate 0–1 point target: nothing to step to; leave CurrentPoint untouched.
+		// No eligible point on this target: leave CurrentPoint untouched. The component reads
+		// "unchanged" as a target boundary and overflows to the adjacent target.
 		return;
 	}
 
@@ -180,16 +181,32 @@ void UTargetingTask_SelectTargetPoint::ExecuteSwitchPoint(
 		return ScreenX(&A) < ScreenX(&B);
 	});
 
+	const int32 Direction = Ctx->SwitchDirection >= 0 ? 1 : -1;
+
+	// Entry case: a null CurrentPoint means we just crossed onto this target from the side (the
+	// component clears it before an overflow request). Don't step — land on the entry-edge point so
+	// a continued scroll keeps flowing the same way: moving right (+1) enters from the left edge,
+	// moving left (-1) from the right edge. One eligible point is enough.
+	if (!IsValid(Ctx->CurrentPoint))
+	{
+		Ctx->CurrentPoint = Direction > 0 ? Candidates[0] : Candidates.Last();
+		return;
+	}
+
+	// Stepping within the current target.
+	if (Candidates.Num() < 2)
+	{
+		// Single eligible point: nothing to step to. Leave CurrentPoint unchanged => boundary signal.
+		return;
+	}
+
 	// Locate the current point. If it is no longer eligible (e.g. it just became blocked), use
 	// the candidate nearest its last screen X as the reference index.
 	int32 CurrentIndex = Candidates.IndexOfByKey(Ctx->CurrentPoint);
 	if (CurrentIndex == INDEX_NONE)
 	{
-		const FVector ReferenceLocation = IsValid(Ctx->CurrentPoint)
-			? Ctx->CurrentPoint->GetComponentLocation()
-			: TargetActor->GetActorLocation();
 		FVector2D ReferenceScreen;
-		const float ReferenceX = PC->ProjectWorldLocationToScreen(ReferenceLocation, ReferenceScreen)
+		const float ReferenceX = PC->ProjectWorldLocationToScreen(Ctx->CurrentPoint->GetComponentLocation(), ReferenceScreen)
 			? ReferenceScreen.X
 			: 0.f;
 
@@ -205,10 +222,13 @@ void UTargetingTask_SelectTargetPoint::ExecuteSwitchPoint(
 		}
 	}
 
-	// Step to the adjacent point in the input direction; clamp at the ends (no wrap).
-	const int32 Direction = Ctx->SwitchDirection >= 0 ? 1 : -1;
+	// Step to the adjacent point in the input direction; clamp at the ends (no wrap). A clamp to the
+	// SAME index means we are at a target edge — leave CurrentPoint UNCHANGED so the component reads
+	// "no advance" and overflows to the adjacent target (the cross-target traversal contract).
 	const int32 NextIndex = FMath::Clamp(CurrentIndex + Direction, 0, Candidates.Num() - 1);
-
-	// The round-trip write: the component reads this back inline after the sync request returns.
-	Ctx->CurrentPoint = Candidates[NextIndex];
+	if (NextIndex != CurrentIndex)
+	{
+		// The round-trip write: the component reads this back inline after the sync request returns.
+		Ctx->CurrentPoint = Candidates[NextIndex];
+	}
 }

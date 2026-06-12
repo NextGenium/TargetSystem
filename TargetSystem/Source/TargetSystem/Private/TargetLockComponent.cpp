@@ -7,6 +7,7 @@
 #include "EngineUtils.h"
 #include "TargetSystemLog.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -66,10 +67,12 @@ void UTargetLockComponent::StartObservingTarget()
     bTargetLocked = true;
     NearestTarget->OnTargetLockBegin(GetOwner());
 
-    // Lock onto the target's first target point — drives the reticle widget attach and the
-    // per-point pitch curve. Point-selection via the preset is a later follow-up.
+    // Lock onto the point the player is actually aiming at (smallest camera angle, distance as a
+    // tiebreak) rather than the array's first entry — drives the reticle widget attach and the
+    // per-point pitch curve. Array order is authoring order (head/wing/tail as added), so [0] would
+    // lock a near-random point; SelectBestLockOnPoint mirrors SortByLockOn's angle+distance scoring.
     const TArray<UTargetPointComponent*> TargetPoints = NearestTarget->GetTargetPoints();
-    LockedPoint = TargetPoints.IsEmpty() ? nullptr : TargetPoints[0];
+    LockedPoint = SelectBestLockOnPoint(TargetPoints);
 
     if (OnTargetLockedOn.IsBound())
     {
@@ -314,6 +317,42 @@ void UTargetLockComponent::StopTargetLock()
     MessageFinishTargetLock();
 }
 
+bool UTargetLockComponent::ExecuteTargetSwitch(int32 Direction)
+{
+    // Core of the enemy (left/right) switch, shared by SwitchTarget and the SwitchTargetPoint
+    // cross-target overflow. Runs the TargetingPreset synchronously in SwitchLeft/Right mode
+    // (FilterSwitchTargetSide + SortByLockOn branch on the Mode) and reports whether the locked
+    // target actually changed (false => no neighbour on that side, e.g. the global edge).
+    if (!IsValid(TargetingPreset))
+    {
+        TS_LOG(Warning, TEXT("[%s] TargetLockComponent: TargetingPreset is not assigned — target switch cannot run."), *GetName());
+        return false;
+    }
+
+    UWorld* World = GetWorld();
+    UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
+    if (!Subsystem) return false;
+
+    const AActor* Before = GetLockedOnTargetActor();
+
+    FTargetingSourceContext SourceContext;
+    SourceContext.SourceActor = GetOwner();
+    UTargetLockContext* TargetLockContext = NewObject<UTargetLockContext>(this);
+    TargetLockContext->CurrentTarget = Cast<AActor>(NearestTarget.GetObject());
+    TargetLockContext->Mode = Direction > 0 ? ETargetSwitchMode::SwitchRight : ETargetSwitchMode::SwitchLeft;
+    SourceContext.SourceObject = TargetLockContext;
+
+    const FTargetingRequestHandle TargetingHandle =
+        UTargetingSubsystem::MakeTargetRequestHandle(TargetingPreset, SourceContext);
+    const FTargetingRequestDelegate Delegate = FTargetingRequestDelegate::CreateUObject(
+        this, &UTargetLockComponent::OnSwitchTargetingCompleted);
+
+    // Synchronous: OnSwitchTargetingCompleted updates NearestTarget before this returns.
+    Subsystem->ExecuteTargetingRequestWithHandle(TargetingHandle, Delegate);
+
+    return GetLockedOnTargetActor() != Before;
+}
+
 void UTargetLockComponent::SwitchTarget(FVector2D AxisValue)
 {
     if (!bTargetLocked) return;
@@ -324,31 +363,39 @@ void UTargetLockComponent::SwitchTarget(FVector2D AxisValue)
     if (FMath::Abs(AxisValue.X) < SwitchActivateThreshold) return;
     if (bIsSwitchingTarget) return;
 
-    // Req 3: manual switch runs the TargetingPreset (Mode = SwitchLeft/Right; FilterSwitchTargetSide
-    // + SortByLockOn branch on the Mode). NOTE: switch behaviour is being reworked separately.
-    if (!IsValid(TargetingPreset))
-    {
-        TS_LOG(Warning, TEXT("[%s] TargetLockComponent: TargetingPreset is not assigned — target switch cannot run."), *GetName());
-        return;
-    }
+    // Req 3: manual enemy switch (Mode = SwitchLeft/Right). The core lives in ExecuteTargetSwitch so
+    // the unified point-scroll (SwitchTargetPoint) can reuse it for cross-target overflow.
+    ExecuteTargetSwitch(AxisValue.X > 0.f ? 1 : -1);
+}
 
+UTargetPointComponent* UTargetLockComponent::RunSwitchPointRequest(AActor* TargetActor, UTargetPointComponent* StartPoint, int32 Direction)
+{
+    // Drive point selection through the subsystem. SelectTargetPoint (in SwitchPointPreset) reads
+    // the context in SwitchPoint mode and writes the chosen point back to Ctx->CurrentPoint — the
+    // round-trip channel for the result. StartPoint == null => land on the entry-edge point;
+    // a returned point equal to StartPoint => we are at the target edge (boundary contract).
     UWorld* World = GetWorld();
     UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
-    if (!Subsystem) return;
+    if (!Subsystem) return StartPoint;
 
     FTargetingSourceContext SourceContext;
     SourceContext.SourceActor = GetOwner();
-    UTargetLockContext* TargetLockContext = NewObject<UTargetLockContext>(this);
-    TargetLockContext->CurrentTarget = Cast<AActor>(NearestTarget.GetObject());
-    TargetLockContext->Mode = AxisValue.X > 0.f ? ETargetSwitchMode::SwitchRight : ETargetSwitchMode::SwitchLeft;
-    SourceContext.SourceObject = TargetLockContext;
+    UTargetLockContext* Ctx = NewObject<UTargetLockContext>(this);
+    Ctx->Mode = ETargetSwitchMode::SwitchPoint;
+    Ctx->CurrentTarget = TargetActor;
+    Ctx->CurrentPoint = StartPoint;
+    Ctx->SwitchDirection = Direction;
+    SourceContext.SourceObject = Ctx;
 
     const FTargetingRequestHandle TargetingHandle =
-        UTargetingSubsystem::MakeTargetRequestHandle(TargetingPreset, SourceContext);
+        UTargetingSubsystem::MakeTargetRequestHandle(SwitchPointPreset, SourceContext);
     const FTargetingRequestDelegate Delegate = FTargetingRequestDelegate::CreateUObject(
-        this, &UTargetLockComponent::OnSwitchTargetingCompleted);
+        this, &UTargetLockComponent::OnSwitchPointTargetingCompleted);
 
+    // Synchronous: Ctx->CurrentPoint is populated by the task by the time this returns.
     Subsystem->ExecuteTargetingRequestWithHandle(TargetingHandle, Delegate);
+
+    return Ctx->CurrentPoint;
 }
 
 void UTargetLockComponent::SwitchTargetPoint(FVector2D AxisValue)
@@ -364,35 +411,34 @@ void UTargetLockComponent::SwitchTargetPoint(FVector2D AxisValue)
         return;
     }
 
-    UWorld* World = GetWorld();
-    UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
-    if (!Subsystem) return;
+    const int32 Direction = AxisValue.X > 0.f ? 1 : -1;
 
-    // Drive point selection through the subsystem. SelectTargetPoint (in SwitchPointPreset) reads
-    // the context in SwitchPoint mode, steps the locked point along the screen-X-sorted list, and
-    // writes the chosen point back to Ctx->CurrentPoint — the round-trip channel for the result.
-    FTargetingSourceContext SourceContext;
-    SourceContext.SourceActor = GetOwner();
-    UTargetLockContext* Ctx = NewObject<UTargetLockContext>(this);
-    Ctx->Mode = ETargetSwitchMode::SwitchPoint;
-    Ctx->CurrentTarget = GetTargetOwnerActor(NearestTarget);
-    Ctx->CurrentPoint = LockedPoint;
-    Ctx->SwitchDirection = AxisValue.X > 0.f ? 1 : -1;
-    SourceContext.SourceObject = Ctx;
-
-    const FTargetingRequestHandle TargetingHandle =
-        UTargetingSubsystem::MakeTargetRequestHandle(SwitchPointPreset, SourceContext);
-    const FTargetingRequestDelegate Delegate = FTargetingRequestDelegate::CreateUObject(
-        this, &UTargetLockComponent::OnSwitchPointTargetingCompleted);
-
-    // Synchronous: Ctx->CurrentPoint is populated by the task by the time this returns.
-    Subsystem->ExecuteTargetingRequestWithHandle(TargetingHandle, Delegate);
-
-    if (IsValid(Ctx->CurrentPoint) && Ctx->CurrentPoint != LockedPoint)
+    // 1) Step along the CURRENT target's points. SelectTargetPoint returns the locked point
+    //    unchanged when we are already at the target edge (the boundary contract).
+    UTargetPointComponent* Stepped = RunSwitchPointRequest(GetTargetOwnerActor(NearestTarget), LockedPoint, Direction);
+    if (IsValid(Stepped) && Stepped != LockedPoint)
     {
-        // LockedPoint drives the reticle attach (moved here) and the camera focus + pitch curve
+        // LockedPoint drives the reticle attach and the camera focus + pitch curve
         // (GetLockedFocusLocation / GetControlRotationOnTarget read it on the next tick).
-        LockedPoint = Ctx->CurrentPoint;
+        LockedPoint = Stepped;
+        MoveReticleToLockedPoint();
+        return;
+    }
+
+    // 2) Target edge reached (or 0–1 point target): overflow onto the adjacent enemy on that side.
+    //    On the global edge there is no neighbour => stay on the current point (clamp, no wrap).
+    if (!ExecuteTargetSwitch(Direction))
+    {
+        return;
+    }
+
+    // 3) Landed on the new target (NearestTarget / LockedPoint updated by the switch). Re-seat the
+    //    lock onto its entry-edge point so a continued scroll keeps flowing the same way — a null
+    //    start point tells SelectTargetPoint to pick the entry edge instead of stepping.
+    UTargetPointComponent* Entry = RunSwitchPointRequest(GetTargetOwnerActor(NearestTarget), nullptr, Direction);
+    if (IsValid(Entry))
+    {
+        LockedPoint = Entry;
         MoveReticleToLockedPoint();
     }
 }
@@ -597,6 +643,66 @@ FVector UTargetLockComponent::GetLockedFocusLocation(const TargetInterface& Inte
         return LockedPoint->GetComponentLocation();
     }
     return GetTargetOwnerLocation(Interface);
+}
+
+UTargetPointComponent* UTargetLockComponent::SelectBestLockOnPoint(
+    const TArray<UTargetPointComponent*>& Points) const
+{
+    if (Points.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    // Mirror SortByLockOn::ComputeLockOnScore, but ranking the chosen target's POINTS instead of
+    // actors: the point with the smallest camera angle wins (distance only breaks ties), so the lock
+    // lands on the point the player is looking at. Prefer the camera (the lock-on view); fall back to
+    // the owner pawn's forward when the camera manager is unavailable.
+    FVector ViewLocation;
+    FVector ViewForward;
+    if (IsValid(OwnerPlayerController) && IsValid(OwnerPlayerController->PlayerCameraManager))
+    {
+        ViewLocation = OwnerPlayerController->PlayerCameraManager->GetCameraLocation();
+        ViewForward  = OwnerPlayerController->PlayerCameraManager->GetCameraRotation().Vector();
+    }
+    else if (IsValid(OwnerActor))
+    {
+        ViewLocation = OwnerActor->GetActorLocation();
+        ViewForward  = OwnerActor->GetActorForwardVector();
+    }
+    else
+    {
+        return Points[0];
+    }
+    ViewForward = ViewForward.GetSafeNormal();
+
+    const FVector SourceLocation = IsValid(OwnerActor) ? OwnerActor->GetActorLocation() : ViewLocation;
+
+    UTargetPointComponent* BestPoint = nullptr;
+    float BestScore = TNumericLimits<float>::Max();
+    for (UTargetPointComponent* Point : Points)
+    {
+        if (!IsValid(Point))
+        {
+            continue;
+        }
+
+        const FVector PointLocation = Point->GetComponentLocation();
+        const FVector ToPoint = (PointLocation - ViewLocation).GetSafeNormal();
+        const float Dot = FMath::Clamp(FVector::DotProduct(ViewForward, ToPoint), -1.f, 1.f);
+        const float AngleDegrees = FMath::RadiansToDegrees(FMath::Acos(Dot));
+        const float Distance = FVector::Distance(SourceLocation, PointLocation);
+
+        // Angle dominates (matches the asset's AngleWeight > DistanceWeight); the small distance term
+        // (~1 angle-degree per 100 uu) only decides between points at a near-equal camera angle.
+        const float Score = AngleDegrees + Distance * 0.01f;
+        if (Score < BestScore)
+        {
+            BestScore = Score;
+            BestPoint = Point;
+        }
+    }
+
+    return IsValid(BestPoint) ? BestPoint : Points[0];
 }
 
 void UTargetLockComponent::SetControlRotationOnTarget() const

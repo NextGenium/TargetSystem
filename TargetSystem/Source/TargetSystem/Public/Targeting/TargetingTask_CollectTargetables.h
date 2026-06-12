@@ -25,5 +25,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Targeting")
 	TSubclassOf<AActor> RequiredActorClass = AActor::StaticClass();
 
+	/**
+	 * Require at least one UTargetPointComponent to be lockable: actors exposing no target points
+	 * are skipped entirely (they never enter the candidate set, so neither lock-on nor target-switch
+	 * can pick them). Default true. Set false on the preset asset to allow point-less actor locks.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Targeting")
+	bool bRequireTargetPoint = true;
+
 	virtual void SelectTargets_Implementation(const FTargetingRequestHandle& TargetingHandle, const FTargetingSourceContext& SourceContext) const override;
 };

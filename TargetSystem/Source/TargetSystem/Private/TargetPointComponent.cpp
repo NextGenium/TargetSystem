@@ -8,6 +8,12 @@
 UTargetPointComponent::UTargetPointComponent()
 {
     SetIsReplicatedByDefault(true);
+
+    // Lock-on eligibility runs through MatchesQuery, which rejects inactive points (rule 5). A plain
+    // scene component is NOT active by default (bAutoActivate == false => IsActive() == false), so
+    // without this every point would be invisible to point-switching. Auto-activate so points are
+    // lockable out of the box; runtime disabling still works via Deactivate() or Block.* StateTags.
+    bAutoActivate = true;
 }
 
 void UTargetPointComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

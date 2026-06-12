@@ -24,9 +24,9 @@ static TAutoConsoleVariable<int32> CVarTargetSystemDebugDraw(
 	0,
 	TEXT("Draw the target-lock overlay without the Gameplay Debugger.\n")
 	TEXT("  0 = off\n")
-	TEXT("  1 = line player->target + target marker\n")
-	TEXT("  2 = + lock-on points (cyan = active, green = free, red = blocked)\n")
-	TEXT("  3 = + point tag labels\n")
+	TEXT("  1 = line player->locked point + anchor marker (through the mesh)\n")
+	TEXT("  2 = + lock-on points with name/point-tag labels through the mesh (green = lockable, red = blocked)\n")
+	TEXT("  3 = + blocker StateTags appended to the labels\n")
 	TEXT("  4 = + candidate scores from the last lock-on request"),
 	ECVF_Cheat);
 
@@ -71,14 +71,20 @@ namespace
 		}
 
 		const AActor* Owner = Component->GetOwner();
+		const UTargetPointComponent* LockedPoint = Component->GetLockedPoint();
+
 		const FVector From = IsValid(Owner) ? Owner->GetActorLocation() : Target->GetActorLocation();
-		const FVector To = Target->GetActorLocation();
+		// Aim the lock trace at the actual locked POINT (head/leg/...) we are anchored to, not the
+		// actor origin. Fall back to the actor location only when no point is locked.
+		const FVector To = IsValid(LockedPoint) ? LockedPoint->GetComponentLocation() : Target->GetActorLocation();
 
 		FVector CamRight, CamUp;
 		GetCameraBasis(Owner, CamRight, CamUp);
 
-		DrawDebugLine(World, From, To, FColor::Yellow, false, -1.f, 0, 2.f);
-		DrawDebugSphere(World, To, 24.f, 12, FColor::Yellow, false, -1.f, 0, 1.f);
+		// SDPG_Foreground so the trace + anchor read through the target mesh (the locked point is
+		// often inside the body).
+		DrawDebugLine(World, From, To, FColor::Yellow, false, -1.f, SDPG_Foreground, 2.f);
+		DrawDebugSphere(World, To, 24.f, 12, FColor::Yellow, false, -1.f, SDPG_Foreground, 1.f);
 
 		if (Level >= 2)
 		{
@@ -95,22 +101,32 @@ namespace
 
 					const bool bActive = (Point == ActivePoint);
 					const bool bBlocked = !Point->StateTags.IsEmpty();
-					const FColor Color = bActive ? FColor::Cyan : (bBlocked ? FColor::Red : FColor::Green);
+					// A lockable point is green; a runtime-blocked one (StateTags present) is red. The
+					// active point shares the green but is drawn larger — the yellow trace marks which
+					// one we are anchored to.
+					const FColor Color = bBlocked ? FColor::Red : FColor::Green;
 					const FVector PointLocation = Point->GetComponentLocation();
 
-					// Camera-facing circle instead of a sphere so the point reads as a flat marker.
+					// Camera-facing circle (flat marker), SDPG_Foreground so it reads through the mesh.
 					DrawDebugCircle(World, PointLocation, bActive ? 16.f : 12.f, 16, Color,
-						false, -1.f, 0, 1.5f, CamRight, CamUp, false);
+						false, -1.f, SDPG_Foreground, 1.5f, CamRight, CamUp, false);
 
-					if (Level >= 3)
+					// Label next to the marker: "Name [point tags]" (mirrors the MotionWarping point
+					// visualizer). DrawDebugString is screen-space, so the text reads through the mesh
+					// like the marker. Drawn with the points (level 2); level 3 appends the blocker tags.
+					const FString Tags = Point->PointTags.IsEmpty()
+						? TEXT("(no point tags)")
+						: Point->PointTags.ToStringSimple();
+					FString Label = FString::Printf(TEXT("%s [%s]"), *Point->GetName(), *Tags);
+					if (bActive)
 					{
-						FString Label = Point->PointTags.IsEmpty() ? TEXT("(no tags)") : Point->PointTags.ToStringSimple();
-						if (bActive)
-						{
-							Label += TEXT(" [active]");
-						}
-						DrawDebugString(World, PointLocation, Label, nullptr, Color, 0.f, true);
+						Label += TEXT(" [active]");
 					}
+					if (Level >= 3 && bBlocked)
+					{
+						Label += FString::Printf(TEXT(" [blocked: %s]"), *Point->StateTags.ToStringSimple());
+					}
+					DrawDebugString(World, PointLocation, Label, nullptr, Color, 0.f, true);
 				}
 			}
 		}
@@ -184,6 +200,14 @@ namespace TargetSystemDebugDraw
 			FTSTicker::GetCoreTicker().RemoveTicker(GTickerHandle);
 			GTickerHandle.Reset();
 		}
+	}
+
+	// Shared with the Gameplay Debugger category: it calls this from CollectData so opening the
+	// debugger (apostrophe) draws the exact same foreground (x-ray) trace + point markers + labels
+	// as the cvar ticker, with no console command. Same SDPG_Foreground path => reads through the mesh.
+	void DrawOverlay(UTargetLockComponent* Component, int32 Level)
+	{
+		DrawForComponent(Component, Level);
 	}
 }
 

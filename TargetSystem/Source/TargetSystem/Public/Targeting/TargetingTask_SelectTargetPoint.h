@@ -27,6 +27,14 @@ struct FTargetingSourceContext;
  *   round-trip channel: results are actor-centric (one result per actor), so a single dragon
  *   yields one result and a sort task cannot order points — the stepping must live here.
  *
+ *   Two contracts the component relies on for cross-target traversal:
+ *     • Entry: a null Ctx->CurrentPoint means we just crossed onto this target — the task does not
+ *       step, it lands on the entry-edge point for the direction (right => leftmost, left =>
+ *       rightmost) so a continued scroll keeps flowing the same way.
+ *     • Boundary: when a step would clamp to the same point (target edge, or a 0–1 point target),
+ *       Ctx->CurrentPoint is left UNCHANGED. The component reads "no advance" as the signal to
+ *       overflow onto the adjacent target.
+ *
  * Eligible points are gathered via GetTargetPoints() + MatchesQuery (not QueryTargetPoints,
  * which enemies leave at the interface default {}). PointQuery on this task — configured in the
  * preset asset — is the authoritative eligibility filter.

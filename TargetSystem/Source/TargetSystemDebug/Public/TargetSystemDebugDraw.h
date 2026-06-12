@@ -16,4 +16,12 @@ namespace TargetSystemDebugDraw
 {
 	void Register();
 	void Unregister();
+
+#if ENABLE_DRAW_DEBUG
+	// Draw the through-mesh lock overlay (trace + foreground point markers + name/tag labels) for a
+	// single component at the given cvar level. Shared by the cvar ticker AND the Gameplay Debugger
+	// category, so opening the debugger (apostrophe) reproduces the same x-ray markers with no console
+	// command. No-op when the component is null / not locked. Compiled out in shipping.
+	void DrawOverlay(class UTargetLockComponent* Component, int32 Level);
+#endif
 }
