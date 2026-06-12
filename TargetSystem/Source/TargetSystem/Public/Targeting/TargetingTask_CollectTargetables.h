@@ -7,10 +7,9 @@
 #include "TargetingTask_CollectTargetables.generated.h"
 
 /**
- * Selection task that collects every actor implementing ITargetSystemInterface
- * with IsTargetable() == true within SearchRadius of the source actor.
- *
- * Replaces the legacy manual UTargetSystemComponent::AddPotentialTargetsByInterface (L1).
+ * Selection task that collects every actor implementing ITargetSystemInterface with
+ * IsTargetable() == true within SearchRadius of the source actor. This is the entry task
+ * of a lock-on preset — it seeds the candidate set that the filter and sort tasks refine.
  */
 UCLASS(DisplayName = "Collect Targetable Actors")
 class TARGETSYSTEM_API UTargetingTask_CollectTargetables : public USimpleTargetingSelectionTask

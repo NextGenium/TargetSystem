@@ -4,7 +4,18 @@
 
 #include "CoreMinimal.h"
 #include "TargetSystemInterface.h"
+#include "TargetPointQuery.h"
 #include "Components/ActorComponent.h"
+
+// Debug instrumentation (candidate scoring + lock internals) is compiled only when a debug
+// consumer exists: the Gameplay Debugger category or the targetsystem.DebugDraw cvar overlay.
+// Both expand to 0 in shipping, so the cache, getters and capture code drop out entirely.
+#define TARGETSYSTEM_WITH_DEBUG (WITH_GAMEPLAY_DEBUGGER || ENABLE_DRAW_DEBUG)
+
+#if TARGETSYSTEM_WITH_DEBUG
+#include "Targeting/TargetLockContext.h" // ETargetSwitchMode for the captured candidate sets
+#endif
+
 #include "TargetLockComponent.generated.h"
 
 using TargetInterface = TScriptInterface<ITargetSystemInterface>;
@@ -39,6 +50,18 @@ class APlayerController;
 class UTargetingPreset;
 class UTargetPointComponent;
 struct FTargetingRequestHandle;
+
+#if TARGETSYSTEM_WITH_DEBUG
+// One scored entry from the last targeting request, captured for the debug overlays
+// (GameplayDebugger category + targetsystem.DebugDraw). Results arrive already sorted, so the
+// first captured entry is the winner the component locked / switched to.
+struct FTargetLockDebugCandidate
+{
+	TWeakObjectPtr<AActor> Actor;
+	float Score = 0.f;
+	bool  bWinner = false;
+};
+#endif
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class TARGETSYSTEM_API UTargetLockComponent : public UActorComponent
@@ -83,6 +106,32 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Target System")
     virtual void SwitchTarget(FVector2D AxisValue);
 
+    // Switch the lock-on point on the CURRENT target (head/body/tail). Runs SwitchPointPreset
+    // (SelectTargetPoint) in SwitchPoint mode, which steps the locked point along the screen-X-sorted
+    // eligible points in the input direction (AxisValue.X < 0 => left). Clamps at the ends; no wrap.
+    UFUNCTION(BlueprintCallable, Category = "Target System")
+    virtual void SwitchTargetPoint(FVector2D AxisValue);
+
+#if TARGETSYSTEM_WITH_DEBUG
+    // Debug-only read access for the TargetSystemDebug module (GameplayDebugger category +
+    // targetsystem.DebugDraw). Everything is captured from the last targeting request — no behaviour.
+
+    // Scored candidates from the last lock-on / auto-switch request (index 0 = winner).
+    const TArray<FTargetLockDebugCandidate>& GetDebugLockOnCandidates() const { return DebugLockOnCandidates; }
+
+    // Scored candidates from the last left/right switch request (index 0 = winner).
+    const TArray<FTargetLockDebugCandidate>& GetDebugSwitchCandidates() const { return DebugSwitchCandidates; }
+
+    // Mode of the most recent targeting request (lock-on vs switch direction).
+    ETargetSwitchMode GetDebugLastMode() const { return DebugLastMode; }
+
+    // The currently locked point on the active target (drives reticle / pitch curve), or null.
+    const UTargetPointComponent* GetLockedPoint() const { return LockedPoint; }
+
+    // Post-lock drop range — the target is released once it goes beyond this distance.
+    float GetLoseTargetDistance() const { return LoseTargetDistance; }
+#endif
+
 protected:
     virtual void BeginPlay() override;
 
@@ -91,26 +140,33 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     ECharacterRotationMode CharacterRotationMode = ECharacterRotationMode::OrientToMovement;
 
+    // On the current target's death, re-select through the TargetingPreset. The plugin
+    // stays dumb: all target-selection / combat gating lives in the preset's tasks. If the preset
+    // yields nobody, no re-lock happens and the lock is fully torn down.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
-    bool bAutoTargetSwitch = false;
+    bool bAutoTargetSwitch = true;
 
     // Minimum horizontal-axis magnitude to trigger a target switch. Switch input is discrete
     // (one-shot ±axis from GA_TargetLock_Select*), so this is a simple gate, not an edge latch.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     float SwitchActivateThreshold = 0.5f;
 
-    // Occlusion channel for the lose-target LOS watchdog (defaults to ECC_Visibility). Set this
-    // to whatever channel your walls block; existing BP components may have a stale ECC_Pawn.
+    // VESTIGIAL for the subsystem path: point-switch eligibility is now configured on the
+    // UTargetingTask_SelectTargetPoint::PointQuery inside SwitchPointPreset (the authoritative
+    // filter). Kept so existing BP assignments don't break; no longer read by SwitchTargetPoint.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
-    TEnumAsByte<ECollisionChannel> TargetCollisionChannel;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
-    float BreakLineOfSightDelay = 2.0f;
+    FTargetPointQuery SwitchPointQuery;
 
     // Targeting preset (GameplayTargetingSystem) — single source of truth for target selection
     // and switching. SortByLockOn / FilterSwitchTargetSide branch on the request Mode.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Target Subsystem")
     TObjectPtr<UTargetingPreset> TargetingPreset = nullptr;
+
+    // Point-switch preset: runs SelectTargetPoint (+ SortByScreenX) to step the lock between
+    // points on the CURRENT target. Isolated from TargetingPreset so point-location baking never
+    // leaks into lock-on / actor-switch / re-validation. Until assigned, SwitchTargetPoint no-ops.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Target Subsystem")
+    TObjectPtr<UTargetingPreset> SwitchPointPreset = nullptr;
 
     // Optimization
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Optimization")
@@ -137,6 +193,12 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Pitch Offset using Curve")
 	UCurveFloat* DefaultPitchOffsetCurve = nullptr;
+
+	// High-ground framing: max extra UPWARD pitch (degrees) added when the target stands above the
+	// player, measured from the ground height difference of the two actor origins. 0 disables the
+	// high-ground tilt entirely (pure curve framing). A same-level enemy yields ~0 regardless of this.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Pitch Offset using Curve", meta = (ClampMin = "0.0", ClampMax = "90.0"))
+	float HighGroundMaxPitch = 45.0f;
 
     // Pitch Offset
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System | Pitch Offset")
@@ -182,6 +244,10 @@ protected:
 	void OnTargetingCompleted(FTargetingRequestHandle Handle);
 	void OnSwitchTargetingCompleted(FTargetingRequestHandle Handle);
 
+	// Sync point-switch completion. The chosen point is read inline from the context after
+	// the synchronous request returns, so this is a logging/no-op stub kept for delegate symmetry.
+	void OnSwitchPointTargetingCompleted(FTargetingRequestHandle Handle);
+
 private:
 	UPROPERTY()
 	AActor* OwnerActor = nullptr;
@@ -199,12 +265,28 @@ private:
 
     FTimerHandle SwitchingTargetTimerHandle;
     FTimerHandle ObservingTimer;
-    FTimerHandle BehindWallTimer;
+
+#if TARGETSYSTEM_WITH_DEBUG
+    // Last scored candidate sets captured from the targeting subsystem for the debug overlays.
+    // Index 0 is the winner. Populated in OnTargetingCompleted / OnSwitchTargetingCompleted.
+    TArray<FTargetLockDebugCandidate> DebugLockOnCandidates;
+    TArray<FTargetLockDebugCandidate> DebugSwitchCandidates;
+    ETargetSwitchMode DebugLastMode = ETargetSwitchMode::LockOn;
+
+    // Read (actor, score) pairs from a finished request handle into Out, marking the first valid
+    // result as the winner. Cheap: scores are already computed by the sort task and stored on the
+    // result data, so nothing is recomputed here.
+    void CaptureDebugCandidates(FTargetingRequestHandle Handle, TArray<FTargetLockDebugCandidate>& Out) const;
+#endif
 
     float GetDistanceFromTarget(const TargetInterface& Interface) const;
     FRotator GetControlRotationOnTarget(TargetInterface Interface) const;
     AActor* GetTargetOwnerActor(const TargetInterface& Interface) const;
     FVector GetTargetOwnerLocation(const TargetInterface& Interface) const;
+
+    // Control-rotation focus: the locked point's world location when a point is locked on the
+    // current target, else the actor origin. Lets lock-on aim at head/body/tail.
+    FVector GetLockedFocusLocation(const TargetInterface& Interface) const;
 
     void SetControlRotationOnTarget() const;
     void SetupLocalPlayerController();
@@ -213,11 +295,15 @@ private:
     // all valid are appended to OutTargets.
     AActor* ExtractTargetingResults(FTargetingRequestHandle Handle, TArray<TargetInterface>& OutTargets);
 
-    // Occlusion LOS check for the watchdog: true == clear line of sight to TargetActor (which
-    // is ignored, alongside the owner), false == something blocks TargetCollisionChannel.
-    bool LineTrace(const FVector& Start, const FVector& End, const AActor* TargetActor, FHitResult& Hit) const;
 	void CreateAndAttachTargetLockedOnWidgetComponent(const TargetInterface Interface);
 
+    // Re-parent the existing reticle widget to LockedPoint (used by SwitchTargetPoint — avoids
+    // recreating the UWidgetComponent on every point switch).
+    void MoveReticleToLockedPoint();
+
+    // Lose-target watchdog: fired on ObservingTimer. Drops the lock when the target dies or leaves
+    // LoseTargetDistance, then re-selects through the TargetingPreset (auto-switch on death).
     void UpdateTargetInfo();
+
     void StopTargetLock();
 };

@@ -52,25 +52,43 @@ bool UTargetingTask_FilterSwitchTargetSide::ShouldFilterTarget(
 		return false;
 	}
 
-	// Side is measured relative to the CURRENT target's screen position, not the screen
-	// centre — "switch right" means the neighbour to the right of who you are locked on.
+	// Req 3 (360°): side is measured by world yaw around the camera, not screen X — an off-screen or
+	// behind-the-back combatant projects to an unreliable / clamped screen position. We compare the
+	// horizontal direction (camera -> current target) against (camera -> candidate); the sign of
+	// their cross product's Z says which side the candidate is on (+Z = right, -Z = left).
 	const float InputDirection = TargetLockContext->Mode == ETargetSwitchMode::SwitchLeft ? -1.f : +1.f;
 
-	FVector2D ReferenceScreen;
+	const FVector ViewLocation = IsValid(PC->PlayerCameraManager)
+		? PC->PlayerCameraManager->GetCameraLocation()
+		: PlayerPawn->GetActorLocation();
+
+	FVector ReferenceDir;
 	if (IsValid(TargetLockContext->CurrentTarget))
 	{
-		PC->ProjectWorldLocationToScreen(TargetLockContext->CurrentTarget->GetActorLocation(), ReferenceScreen);
+		ReferenceDir = TargetLockContext->CurrentTarget->GetActorLocation() - ViewLocation;
 	}
 	else
 	{
-		ReferenceScreen = UWidgetLayoutLibrary::GetViewportSize(PC) * 0.5f;
+		// No current target: use the camera forward as the reference axis.
+		ReferenceDir = IsValid(PC->PlayerCameraManager)
+			? PC->PlayerCameraManager->GetCameraRotation().Vector()
+			: PlayerPawn->GetActorForwardVector();
+	}
+	ReferenceDir.Z = 0.f;
+	ReferenceDir = ReferenceDir.GetSafeNormal();
+
+	FVector CandidateDir = TargetActor->GetActorLocation() - ViewLocation;
+	CandidateDir.Z = 0.f;
+	CandidateDir = CandidateDir.GetSafeNormal();
+
+	if (ReferenceDir.IsNearlyZero() || CandidateDir.IsNearlyZero())
+	{
+		return true;
 	}
 
-	FVector2D ScreenPos;
-	PC->ProjectWorldLocationToScreen(TargetActor->GetActorLocation(), ScreenPos);
+	// +Z => candidate is to the right of the current target; -Z => to the left.
+	const float SideSign = FVector::CrossProduct(ReferenceDir, CandidateDir).Z;
 
-	const float DeltaX = ScreenPos.X - ReferenceScreen.X;
-
-	// Remove anything on the wrong side (and anything column-aligned with the current target).
-	return DeltaX * InputDirection <= 0.f;
+	// Remove anything on the wrong side (and anything angularly aligned with the current target).
+	return SideSign * InputDirection <= 0.f;
 }

@@ -9,7 +9,7 @@
 /**
  * Filter task that removes targets whose yaw offset from the source view direction
  * exceeds MaxAngle (degrees). Uses the source actor's camera orientation when present,
- * otherwise its actor orientation (legacy GetAngleUsingCameraRotation parity).
+ * otherwise its actor orientation.
  */
 UCLASS(DisplayName = "Filter By Max Angle")
 class TARGETSYSTEM_API UTargetingTask_FilterByMaxAngle : public USimpleTargetingFilterTask

@@ -7,9 +7,8 @@
 #include "TargetingTask_FilterByMaxDistance.generated.h"
 
 /**
- * Filter task that removes targets farther than MaxDistance from the source actor.
- *
- * Replaces the legacy `Distance > MaximumDistanceCanStartTarget` guard (L1).
+ * Filter task that removes targets farther than MaxDistance from the source actor. This is the
+ * acquisition range cap for lock-on (the post-lock drop range is the component's LoseTargetDistance).
  */
 UCLASS(DisplayName = "Filter By Max Distance")
 class TARGETSYSTEM_API UTargetingTask_FilterByMaxDistance : public USimpleTargetingFilterTask

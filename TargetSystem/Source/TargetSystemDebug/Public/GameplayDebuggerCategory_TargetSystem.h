@@ -10,12 +10,12 @@
 /**
  * Gameplay Debugger category for the TargetSystem plugin.
  *
- * Reads the player pawn's UTargetLockComponent via its public API (IsLocked /
- * GetLockedOnTargetActor) and draws: lock state, the locked target, a 3D line to it,
- * and the target's lock-on points with their PointTags / StateTags.
- *
- * Candidate/score overlay lights up once UTargetLockComponent exposes its last
- * targeting result publicly.
+ * Reads the player pawn's UTargetLockComponent via its public (debug) API and draws:
+ *  - lock state and the mode of the last targeting request;
+ *  - the ranked candidate sets for the last lock-on and switch requests, each entry showing the
+ *    engine score plus the raw camera angle / distance, with the winning candidate highlighted;
+ *  - the locked target, a 3D line to it, and the live distance against LoseTargetDistance;
+ *  - the target's lock-on points (active / blocked / free) with their PointTags / StateTags.
  */
 class FGameplayDebuggerCategory_TargetSystem final : public FGameplayDebuggerCategory
 {

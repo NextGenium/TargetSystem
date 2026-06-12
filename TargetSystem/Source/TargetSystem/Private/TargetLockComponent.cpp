@@ -21,10 +21,6 @@ UTargetLockComponent::UTargetLockComponent()
 
     // LockedOnWidgetClass is assigned project-side via the EditAnywhere UPROPERTY.
     // The plugin ships no Content, so no default widget is loaded here.
-
-    // Occlusion channel for the lose-target LOS watchdog (UpdateTargetInfo). Visibility is the
-    // conventional channel for "is a wall between me and the target"; Pawn would miss world geo.
-    TargetCollisionChannel = ECC_Visibility;
 }
 
 void UTargetLockComponent::SetUp(
@@ -95,19 +91,19 @@ void UTargetLockComponent::StartObservingTarget()
 
 void UTargetLockComponent::UpdateTargetInfo()
 {
-    FHitResult Hit;
-    if(NearestTarget->IsTargetable() && !LineTrace(GetOwner()->GetActorLocation(), GetTargetOwnerLocation(NearestTarget), GetTargetOwnerActor(NearestTarget), Hit))
+    // Lock may have been torn down between timer ticks.
+    if (!NearestTarget)
     {
-        if (BehindWallTimer.IsValid()) return;
-        GetWorld()->GetTimerManager().SetTimer(BehindWallTimer, [this]() { StopObservingTarget(true); }, BreakLineOfSightDelay, false);
+        StopObservingTarget(false, true);
         return;
     }
-    GetWorld()->GetTimerManager().ClearTimer(BehindWallTimer);
 
-    if (NearestTarget
-        && NearestTarget->IsTargetable()
+    // Hold the lock while the target is alive and in range — no auto-switch, no re-pick, no
+    // line-of-sight check (Req 2: target selection lives entirely in the TargetingPreset).
+    if (NearestTarget->IsTargetable()
         && GetDistanceFromTarget(NearestTarget) <= LoseTargetDistance) return;
 
+    // Death / out-of-range: drop and re-select through the preset (auto-switch on death).
     StopObservingTarget(false, true);
 }
 
@@ -181,13 +177,55 @@ AActor* UTargetLockComponent::ExtractTargetingResults(FTargetingRequestHandle Ha
     return First;
 }
 
+#if TARGETSYSTEM_WITH_DEBUG
+void UTargetLockComponent::CaptureDebugCandidates(FTargetingRequestHandle Handle, TArray<FTargetLockDebugCandidate>& Out) const
+{
+    Out.Reset();
+
+    const FTargetingDefaultResultsSet* Results = FTargetingDefaultResultsSet::Find(Handle);
+    if (!Results)
+    {
+        return;
+    }
+
+    bool bWinnerMarked = false;
+    for (const FTargetingDefaultResultData& Data : Results->TargetResults)
+    {
+        AActor* Actor = Data.HitResult.GetActor();
+        if (!IsValid(Actor))
+        {
+            continue;
+        }
+
+        FTargetLockDebugCandidate& Candidate = Out.AddDefaulted_GetRef();
+        Candidate.Actor = Actor;
+        Candidate.Score = Data.Score;
+
+        if (!bWinnerMarked)
+        {
+            Candidate.bWinner = true;
+            bWinnerMarked = true;
+        }
+    }
+}
+#endif
+
 void UTargetLockComponent::OnTargetingCompleted(FTargetingRequestHandle Handle)
 {
     PotentialTargets.Reset();
     AActor* First = ExtractTargetingResults(Handle, PotentialTargets);
+
+#if TARGETSYSTEM_WITH_DEBUG
+    CaptureDebugCandidates(Handle, DebugLockOnCandidates);
+    DebugLastMode = ETargetSwitchMode::LockOn;
+#endif
+
     if (!First)
     {
-        MessageFinishTargetLock();
+        // No target found — initial lock-on came up empty, or the death auto-switch (Req 2) found
+        // no other combatant. Either way fully tear the lock down (clears a dead NearestTarget,
+        // restores look input). StopTargetLock broadcasts OnFinishTargetLock at the end.
+        StopTargetLock();
         return;
     }
 
@@ -199,6 +237,18 @@ void UTargetLockComponent::OnSwitchTargetingCompleted(FTargetingRequestHandle Ha
 {
     TArray<TargetInterface> Results;
     AActor* First = ExtractTargetingResults(Handle, Results);
+
+#if TARGETSYSTEM_WITH_DEBUG
+    CaptureDebugCandidates(Handle, DebugSwitchCandidates);
+    if (const FTargetingSourceContext* SourceContext = FTargetingSourceContext::Find(Handle))
+    {
+        if (const UTargetLockContext* LockContext = Cast<UTargetLockContext>(SourceContext->SourceObject))
+        {
+            DebugLastMode = LockContext->Mode;
+        }
+    }
+#endif
+
     if (!First)
     {
         return;
@@ -273,6 +323,9 @@ void UTargetLockComponent::SwitchTarget(FVector2D AxisValue)
     // is already debounced by bIsSwitchingTarget (0.25–0.5s cooldown via ResetIsSwitchingTarget).
     if (FMath::Abs(AxisValue.X) < SwitchActivateThreshold) return;
     if (bIsSwitchingTarget) return;
+
+    // Req 3: manual switch runs the TargetingPreset (Mode = SwitchLeft/Right; FilterSwitchTargetSide
+    // + SortByLockOn branch on the Mode). NOTE: switch behaviour is being reworked separately.
     if (!IsValid(TargetingPreset))
     {
         TS_LOG(Warning, TEXT("[%s] TargetLockComponent: TargetingPreset is not assigned — target switch cannot run."), *GetName());
@@ -298,8 +351,63 @@ void UTargetLockComponent::SwitchTarget(FVector2D AxisValue)
     Subsystem->ExecuteTargetingRequestWithHandle(TargetingHandle, Delegate);
 }
 
+void UTargetLockComponent::SwitchTargetPoint(FVector2D AxisValue)
+{
+    if (!bTargetLocked || !NearestTarget) return;
+
+    // Same discrete one-shot ±axis input as SwitchTarget — gate on magnitude, not an edge latch.
+    if (FMath::Abs(AxisValue.X) < SwitchActivateThreshold) return;
+
+    if (!IsValid(SwitchPointPreset))
+    {
+        TS_LOG(Warning, TEXT("[%s] TargetLockComponent: SwitchPointPreset is not assigned — point switch cannot run."), *GetName());
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    UTargetingSubsystem* Subsystem = World ? UTargetingSubsystem::Get(World) : nullptr;
+    if (!Subsystem) return;
+
+    // Drive point selection through the subsystem. SelectTargetPoint (in SwitchPointPreset) reads
+    // the context in SwitchPoint mode, steps the locked point along the screen-X-sorted list, and
+    // writes the chosen point back to Ctx->CurrentPoint — the round-trip channel for the result.
+    FTargetingSourceContext SourceContext;
+    SourceContext.SourceActor = GetOwner();
+    UTargetLockContext* Ctx = NewObject<UTargetLockContext>(this);
+    Ctx->Mode = ETargetSwitchMode::SwitchPoint;
+    Ctx->CurrentTarget = GetTargetOwnerActor(NearestTarget);
+    Ctx->CurrentPoint = LockedPoint;
+    Ctx->SwitchDirection = AxisValue.X > 0.f ? 1 : -1;
+    SourceContext.SourceObject = Ctx;
+
+    const FTargetingRequestHandle TargetingHandle =
+        UTargetingSubsystem::MakeTargetRequestHandle(SwitchPointPreset, SourceContext);
+    const FTargetingRequestDelegate Delegate = FTargetingRequestDelegate::CreateUObject(
+        this, &UTargetLockComponent::OnSwitchPointTargetingCompleted);
+
+    // Synchronous: Ctx->CurrentPoint is populated by the task by the time this returns.
+    Subsystem->ExecuteTargetingRequestWithHandle(TargetingHandle, Delegate);
+
+    if (IsValid(Ctx->CurrentPoint) && Ctx->CurrentPoint != LockedPoint)
+    {
+        // LockedPoint drives the reticle attach (moved here) and the camera focus + pitch curve
+        // (GetLockedFocusLocation / GetControlRotationOnTarget read it on the next tick).
+        LockedPoint = Ctx->CurrentPoint;
+        MoveReticleToLockedPoint();
+    }
+}
+
+void UTargetLockComponent::OnSwitchPointTargetingCompleted(FTargetingRequestHandle Handle)
+{
+    // No-op: SwitchTargetPoint reads the chosen point inline from the context after the
+    // synchronous request returns. Kept for delegate symmetry with the other completion handlers.
+}
+
 void UTargetLockComponent::AutoSwitchTarget()
 {
+    // Req 2: on the current target's death, re-select through the TargetingPreset (it picks the new
+    // nearest valid target). If the preset yields nobody, OnTargetingCompleted tears the lock down
+    // via StopTargetLock. All target-selection logic stays in the preset — the plugin stays dumb.
     TryStartTargetLock();
 }
 
@@ -384,6 +492,15 @@ void UTargetLockComponent::CreateAndAttachTargetLockedOnWidgetComponent(const Ta
 	TargetLockedOnWidgetComponent->RegisterComponent();
 }
 
+void UTargetLockComponent::MoveReticleToLockedPoint()
+{
+    if (!IsValid(TargetLockedOnWidgetComponent) || !LockedPoint) return;
+
+    TargetLockedOnWidgetComponent->AttachToComponent(
+        LockedPoint, FAttachmentTransformRules::KeepRelativeTransform);
+    TargetLockedOnWidgetComponent->SetRelativeLocation(LockedOnWidgetRelativeLocation);
+}
+
 void UTargetLockComponent::SetupLocalPlayerController()
 {
 	if (!IsValid(OwnerPawn))
@@ -393,37 +510,6 @@ void UTargetLockComponent::SetupLocalPlayerController()
 	}
 
 	OwnerPlayerController = Cast<APlayerController>(OwnerPawn->GetController());
-}
-
-bool UTargetLockComponent::LineTrace(const FVector& Start, const FVector& End, const AActor* TargetActor, FHitResult& Hit) const
-{
-    FCollisionQueryParams Params;
-    Params.AddIgnoredActor(GetOwner());
-
-	  TArray<AActor*> IgnoredActors {};
-    IgnoredActors.Init(OwnerActor, 1);
-    for (AActor* ChildActor : OwnerActor->Children)
-    {
-        IgnoredActors.Add(ChildActor);
-    }
-    Params.AddIgnoredActors(IgnoredActors);
-
-    // Ignore the target itself: pure occlusion check — only blockers BETWEEN owner and target
-    // matter. A trace reaching the (ignored) target with no blocking hit == clear line of sight.
-    if (IsValid(TargetActor))
-    {
-        Params.AddIgnoredActor(TargetActor);
-    }
-
-    const bool bBlockingHit = GetWorld()->LineTraceSingleByChannel(
-        Hit,
-        Start,
-        End,
-        TargetCollisionChannel,
-        Params
-    );
-
-    return !bBlockingHit;
 }
 
 FRotator UTargetLockComponent::GetControlRotationOnTarget(TargetInterface Interface) const
@@ -439,7 +525,7 @@ FRotator UTargetLockComponent::GetControlRotationOnTarget(TargetInterface Interf
 	const FRotator ControlRotation = OwnerPlayerController->GetControlRotation();
 
 	const FVector CharacterLocation = OwnerActor->GetActorLocation();
-    FVector TargetPointLocation = GetTargetOwnerLocation(Interface);
+    FVector TargetPointLocation = GetLockedFocusLocation(Interface);
 
 	// Find look at rotation
 	const FRotator LookRotation = FRotationMatrix::MakeFromX(TargetPointLocation - CharacterLocation).Rotator();
@@ -457,7 +543,21 @@ FRotator UTargetLockComponent::GetControlRotationOnTarget(TargetInterface Interf
 	        : DefaultPitchOffsetCurve;
 
 		const float CurveValue = IsValid(CurvePitch) ? CurvePitch->GetFloatValue(Distance) : 0.f;
-		TargetRotation = FRotator(CurveValue, LookRotation.Yaw, ControlRotation.Roll);
+
+	    // Req 4 (high-ground): drive the upward tilt from the GROUND height difference between the two
+	    // actor origins, NOT from the look-at to the locked point. The look-at to a chest/head point is
+	    // steeply positive at close range even for a same-level foe (atan of a tiny horizontal distance),
+	    // which craned the camera under the target as the player closed in. Comparing the two origins'
+	    // Z (same reference height) gives ~0 for a same-level enemy at ANY distance, and a real positive
+	    // angle only when the enemy stands higher. Clamped to >= 0 (only upward) and capped so a foe
+	    // almost directly overhead can't flip the camera fully vertical.
+	    const FVector TargetActorLocation = GetTargetOwnerLocation(Interface);
+	    const float HeightDelta = TargetActorLocation.Z - CharacterLocation.Z;
+	    const float HorizontalDistance = FVector::Dist2D(TargetActorLocation, CharacterLocation);
+	    const float ElevationPitch = FMath::Clamp(
+	        FMath::RadiansToDegrees(FMath::Atan2(HeightDelta, FMath::Max(HorizontalDistance, 1.f))),
+	        0.f, HighGroundMaxPitch);
+		TargetRotation = FRotator(CurveValue + ElevationPitch, LookRotation.Yaw, ControlRotation.Roll);
 	}
 	else if (bAdjustPitchBasedOnDistanceToTarget)
 	{
@@ -487,6 +587,16 @@ FVector UTargetLockComponent::GetTargetOwnerLocation(const TargetInterface& Inte
     const AActor* TargetActor = GetTargetOwnerActor(Interface);
     if (!IsValid(TargetActor)) return FVector::Zero();
     return TargetActor->GetActorLocation();
+}
+
+FVector UTargetLockComponent::GetLockedFocusLocation(const TargetInterface& Interface) const
+{
+    // Aim at the locked point on the current target (UC3); otherwise the actor origin.
+    if (Interface.GetObject() == NearestTarget.GetObject() && IsValid(LockedPoint))
+    {
+        return LockedPoint->GetComponentLocation();
+    }
+    return GetTargetOwnerLocation(Interface);
 }
 
 void UTargetLockComponent::SetControlRotationOnTarget() const

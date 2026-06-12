@@ -39,4 +39,9 @@ public:
 
 	UPROPERTY(BlueprintReadWrite, Category = "Target Lock")
 	TObjectPtr<UTargetPointComponent> CurrentPoint = nullptr;
+
+	// Point-switch only: step direction along the screen-X-sorted point list. -1 = left, +1 = right.
+	// SelectTargetPoint reads this in SwitchPoint mode and writes the stepped point back to CurrentPoint.
+	UPROPERTY(BlueprintReadWrite, Category = "Target Lock")
+	int32 SwitchDirection = 0;
 };

@@ -11,8 +11,6 @@
  * Filter task that removes targets obstructed from the source actor by world geometry.
  * Traces a line from the source actor to the target on TraceChannel; the target is
  * removed only when something other than the target actor blocks the line.
- *
- * Replaces the legacy UTargetSystemComponent::LineTrace gate (L1).
  */
 UCLASS(DisplayName = "Filter By Line Of Sight")
 class TARGETSYSTEM_API UTargetingTask_FilterByLineOfSight : public USimpleTargetingFilterTask
