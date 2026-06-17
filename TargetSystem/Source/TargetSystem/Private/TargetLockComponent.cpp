@@ -357,11 +357,10 @@ void UTargetLockComponent::SwitchTarget(FVector2D AxisValue)
 {
     if (!bTargetLocked) return;
 
-    // Switch is driven by discrete one-shot input (GA_TargetLock_Select* sends a ±999 axis,
-    // not a per-tick analog value), so a simple magnitude gate is correct here. Re-fire spam
-    // is already debounced by bIsSwitchingTarget (0.25–0.5s cooldown via ResetIsSwitchingTarget).
-    if (FMath::Abs(AxisValue.X) < SwitchActivateThreshold) return;
-    if (bIsSwitchingTarget) return;
+	// Magnitude gating happens at the input layer (MinimumMagnitudeToSwitchTarget). Here we only
+	// debounce repeats: bIsSwitchingTarget holds for SwitchCooldown seconds after each switch so a
+	// held stick / continued mouse motion can't step through several targets in one gesture.
+	if (bIsSwitchingTarget) return;
 
     // Req 3: manual enemy switch (Mode = SwitchLeft/Right). The core lives in ExecuteTargetSwitch so
     // the unified point-scroll (SwitchTargetPoint) can reuse it for cross-target overflow.
@@ -402,8 +401,10 @@ void UTargetLockComponent::SwitchTargetPoint(FVector2D AxisValue)
 {
     if (!bTargetLocked || !NearestTarget) return;
 
-    // Same discrete one-shot ±axis input as SwitchTarget — gate on magnitude, not an edge latch.
-    if (FMath::Abs(AxisValue.X) < SwitchActivateThreshold) return;
+	// Repeat-protection: the project calls this every frame from analog look input
+	// (UGInputHandler_Look::PostProcessLookInput), so without a cooldown one gesture would step
+	// through several points/targets in a row.
+    if (bIsSwitchingTarget) return;
 
     if (!IsValid(SwitchPointPreset))
     {
@@ -422,6 +423,8 @@ void UTargetLockComponent::SwitchTargetPoint(FVector2D AxisValue)
         // (GetLockedFocusLocation / GetControlRotationOnTarget read it on the next tick).
         LockedPoint = Stepped;
         MoveReticleToLockedPoint();
+    	bIsSwitchingTarget = true;
+    	ResetIsSwitchingTarget();
         return;
     }
 
@@ -476,7 +479,7 @@ void UTargetLockComponent::ResetIsSwitchingTarget()
              SwitchingTargetTimerHandle,
              this,
              &UTargetLockComponent::ResetIsSwitchingTarget,
-             bIsSwitchingTarget ? 0.25f : 0.5f,
+             SwitchCooldown,
              false
          );
         return;

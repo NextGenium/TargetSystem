@@ -149,10 +149,13 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
     bool bAutoTargetSwitch = true;
 
-    // Minimum horizontal-axis magnitude to trigger a target switch. Switch input is discrete
-    // (one-shot ±axis from GA_TargetLock_Select*), so this is a simple gate, not an edge latch.
+    // Cooldown (seconds) between consecutive target / point switches. SwitchTarget and
+    // SwitchTargetPoint are driven by per-tick input — the project's look handler calls
+    // SwitchTargetPoint every frame while the stick/mouse is held — so this debounce stops one
+    // gesture from stepping through several points/targets at once. Magnitude gating lives at the
+    // input layer (MinimumMagnitudeToSwitchTarget in UGInputHandler_Look), not here.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target System")
-    float SwitchActivateThreshold = 0.5f;
+    float SwitchCooldown = 0.3f;
 
     // VESTIGIAL for the subsystem path: point-switch eligibility is now configured on the
     // UTargetingTask_SelectTargetPoint::PointQuery inside SwitchPointPreset (the authoritative
