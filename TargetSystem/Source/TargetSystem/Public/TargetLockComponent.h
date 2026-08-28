@@ -94,6 +94,16 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Target System")
     AActor* GetLockedOnTargetActor() const;
 
+    // Yaw the VIEW must be turned by to centre the locked target on screen when the camera sits off to
+    // the side (over-the-shoulder rig). ControlRotation aims the body from the character pivot, so a
+    // laterally-offset camera looks past the target by this parallax angle — atan2(SideOffset, Distance),
+    // which grows as the player closes in. Apply it in a camera modifier / rig on the view only; feeding
+    // it back into ControlRotation is what made the body aim wide and melee whiff.
+    // Returns 0 when not locked or with no camera manager. Reads the live camera location, so call it
+    // once per frame during camera update.
+    UFUNCTION(BlueprintPure, Category = "Target System")
+    float GetCameraParallaxYawOffset() const;
+
     UFUNCTION(BlueprintCallable, Category = "Target System")
     virtual void TryStartTargetLock();
 

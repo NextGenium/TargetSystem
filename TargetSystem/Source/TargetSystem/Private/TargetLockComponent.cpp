@@ -471,6 +471,27 @@ bool UTargetLockComponent::IsLocked() const
 	return bTargetLocked && NearestTarget;
 }
 
+float UTargetLockComponent::GetCameraParallaxYawOffset() const
+{
+    if (!IsLocked() || !IsValid(OwnerActor) || !IsValid(OwnerPlayerController)
+        || !IsValid(OwnerPlayerController->PlayerCameraManager))
+    {
+        return 0.f;
+    }
+
+    // Difference between "where the camera has to look to centre the target" and "where the body is
+    // aimed" (GetControlRotationOnTarget's pivot yaw). No feedback loop: ControlRotation no longer
+    // depends on the camera location, so this only ever reads the rig, never steers it.
+    const FVector FocusLocation  = GetLockedFocusLocation(NearestTarget);
+    const FVector PivotLocation  = OwnerActor->GetActorLocation();
+    const FVector CameraLocation = OwnerPlayerController->PlayerCameraManager->GetCameraLocation();
+
+    const float PivotYaw  = FRotationMatrix::MakeFromX(FocusLocation - PivotLocation).Rotator().Yaw;
+    const float CameraYaw = FRotationMatrix::MakeFromX(FocusLocation - CameraLocation).Rotator().Yaw;
+
+    return FMath::FindDeltaAngleDegrees(PivotYaw, CameraYaw);
+}
+
 void UTargetLockComponent::ResetIsSwitchingTarget()
 {
     if (!SwitchingTargetTimerHandle.IsValid())
@@ -576,19 +597,14 @@ FRotator UTargetLockComponent::GetControlRotationOnTarget(TargetInterface Interf
 	const FVector CharacterLocation = OwnerActor->GetActorLocation();
     FVector TargetPointLocation = GetLockedFocusLocation(Interface);
 
-	// Yaw is aimed from the actual camera position, not the character pivot, so the camera rig's
-	// lateral (over-the-shoulder) offset doesn't leave the target off-centre. Aiming the pivot
-	// straight at the target leaves the camera — sitting a few units to the side — looking parallel,
-	// which pushes the target off by the parallax angle atan2(SideOffset, Distance). Pitch keeps
-	// using the character origin below so the distance / curve / high-ground framing is unaffected.
-	FVector YawViewLocation = CharacterLocation;
-	if (IsValid(OwnerPlayerController->PlayerCameraManager))
-	{
-		YawViewLocation = OwnerPlayerController->PlayerCameraManager->GetCameraLocation();
-	}
-	const float LookYaw = FRotationMatrix::MakeFromX(TargetPointLocation - YawViewLocation).Rotator().Yaw;
-
-	// Find look at rotation (pitch source — character origin).
+	// Yaw MUST be aimed from the character pivot, not from the camera position. ControlRotation is the
+	// combat aim: bUseControllerDesiredRotation turns the body to it, and melee traces / motion warping
+	// inherit that facing. Aiming it from an over-the-shoulder camera creates a feedback loop
+	// (ControlRotation -> spring arm -> camera location -> ControlRotation) whose fixed point centres the
+	// target on screen while leaving the BODY off by atan2(SideOffset, Distance) — ~23 deg at 1.5 m, which
+	// is a whiffed hit. Screen centring is a camera concern: read GetCameraParallaxYawOffset() from a
+	// camera modifier / rig and apply it to the view only, never to ControlRotation.
+	// Find look at rotation.
 	const FRotator LookRotation = FRotationMatrix::MakeFromX(TargetPointLocation - CharacterLocation).Rotator();
 	float Pitch = LookRotation.Pitch;
 	FRotator TargetRotation;
@@ -618,7 +634,7 @@ FRotator UTargetLockComponent::GetControlRotationOnTarget(TargetInterface Interf
 	    const float ElevationPitch = FMath::Clamp(
 	        FMath::RadiansToDegrees(FMath::Atan2(HeightDelta, FMath::Max(HorizontalDistance, 1.f))),
 	        0.f, HighGroundMaxPitch);
-		TargetRotation = FRotator(CurveValue + ElevationPitch, LookYaw, ControlRotation.Roll);
+		TargetRotation = FRotator(CurveValue + ElevationPitch, LookRotation.Yaw, ControlRotation.Roll);
 	}
 	else if (bAdjustPitchBasedOnDistanceToTarget)
 	{
@@ -627,11 +643,11 @@ FRotator UTargetLockComponent::GetControlRotationOnTarget(TargetInterface Interf
 		const float PitchOffset = FMath::Clamp(PitchInRange, PitchMin, PitchMax);
 
 		Pitch = Pitch + PitchOffset;
-		TargetRotation = FRotator(Pitch, LookYaw, ControlRotation.Roll);
+		TargetRotation = FRotator(Pitch, LookRotation.Yaw, ControlRotation.Roll);
 	}
 	else
 	{
-	    TargetRotation = FRotator(Pitch, LookYaw, ControlRotation.Roll);
+	    TargetRotation = FRotator(Pitch, LookRotation.Yaw, ControlRotation.Roll);
 	}
 
 	return FMath::RInterpTo(ControlRotation, TargetRotation, GetWorld()->GetDeltaSeconds(), 9.0f);
