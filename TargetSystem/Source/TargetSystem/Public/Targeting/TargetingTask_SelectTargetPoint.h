@@ -16,10 +16,10 @@ struct FTargetingSourceContext;
  *
  * - LockOn (default): resolves, for each already-collected target actor, the nearest lockable
  *   UTargetPointComponent matching PointQuery and bakes that point's world location into the
- *   result's HitResult (camera / lock-on read HitResult.Location). The point component pointer
- *   is stored best-effort only: points are USceneComponent (not UPrimitiveComponent), so
- *   HitResult.Component may be null. When a target exposes no matching point the lock falls back
- *   to the actor location (the existing actor result is left unchanged, not removed).
+ *   result's HitResult (camera / lock-on read HitResult.Location). HitResult.Component is not
+ *   written: points are USceneComponent, not UPrimitiveComponent. When a target exposes no
+ *   matching point the lock falls back to the actor location (the existing actor result is left
+ *   unchanged, not removed).
  *
  * - SwitchPoint (head ↔ body ↔ tail): steps the lock from Ctx->CurrentPoint to the adjacent
  *   eligible point on Ctx->CurrentTarget, ordered by screen X, in Ctx->SwitchDirection (clamp,

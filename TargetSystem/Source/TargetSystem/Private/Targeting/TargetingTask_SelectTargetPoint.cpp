@@ -106,13 +106,12 @@ void UTargetingTask_SelectTargetPoint::ExecuteLockOn(
 			continue;
 		}
 
-		// Bake the chosen point's world location into the result. The camera / lock-on
-		// reads HitResult.Location; the component pointer is best-effort (points are
-		// USceneComponent, not UPrimitiveComponent, so the cast may yield null).
+		// Bake the chosen point's world location into the result; the camera / lock-on reads
+		// HitResult.Location. HitResult.Component is left untouched: points are USceneComponent,
+		// so there is no UPrimitiveComponent to record (the chosen point travels via Ctx->CurrentPoint).
 		const FVector PointLocation = BestPoint->GetComponentLocation();
 		TargetData.HitResult.Location = PointLocation;
 		TargetData.HitResult.ImpactPoint = PointLocation;
-		TargetData.HitResult.Component = Cast<UPrimitiveComponent>(BestPoint);
 	}
 }
 
